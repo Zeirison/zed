@@ -37,6 +37,9 @@ pub struct WorkspaceSettingsContent {
     pub pane_split_direction_vertical: Option<PaneSplitDirectionVertical>,
     /// Centered layout related settings.
     pub centered_layout: Option<CenteredLayoutSettings>,
+    /// Render the editor area and docks as rounded "islands" separated by
+    /// gaps, similar to the JetBrains Islands UI.
+    pub islands: Option<IslandsSettings>,
     /// Whether or not to prompt the user to confirm before closing the application.
     ///
     /// Default: false
@@ -699,6 +702,24 @@ pub enum PaneSplitDirectionHorizontal {
 pub enum PaneSplitDirectionVertical {
     Left,
     Right,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+#[with_fallible_options]
+pub struct IslandsSettings {
+    /// Whether to render the editor area and docks as islands.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// The gap between islands, and between islands and the window edge, in pixels.
+    ///
+    /// Default: 6
+    pub gap: Option<f32>,
+    /// The corner radius of each island, in pixels.
+    ///
+    /// Default: 10
+    pub corner_radius: Option<f32>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]

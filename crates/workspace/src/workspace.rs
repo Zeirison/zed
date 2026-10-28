@@ -158,7 +158,7 @@ use util::{
 use uuid::Uuid;
 pub use workspace_settings::{
     AccessibleMode, AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, FocusFollowsMouse,
-    RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
+    IslandsLayout, RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
     closing_last_window_quits_app, observe_accessible_mode,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
@@ -8898,6 +8898,13 @@ impl Workspace {
         // this, toggle_panel_focus cannot focus the panel when the dock is closed.
         let dock = dock.read(cx);
         if let Some(panel) = dock.visible_panel() {
+            let islands = WorkspaceSettings::get_global(cx).islands;
+            if islands.enabled {
+                container = container
+                    .relative()
+                    .p(px(islands.gap / 2.))
+                    .child(island_corner_mask(islands, cx));
+            }
             let size_state = dock.stored_panel_size_state(panel.as_ref());
             let min_size = panel.min_size(window, cx);
             if position.axis() == Axis::Horizontal {
@@ -9089,6 +9096,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
+        let islands = WorkspaceSettings::get_global(cx).islands;
         div()
             .id("editor-region")
             .role(gpui::Role::Main)
@@ -9097,6 +9105,9 @@ impl Workspace {
                 this.track_focus(&self.region_focus_handles.editor)
             })
             .size_full()
+            .when(islands.enabled, |this| {
+                this.relative().p(px(islands.gap / 2.))
+            })
             .child(self.center.render(
                 self.zoomed.as_ref(),
                 self.maximized_pane.as_ref(),
@@ -9104,6 +9115,9 @@ impl Workspace {
                 window,
                 cx,
             ))
+            .when(islands.enabled, |this| {
+                this.child(island_corner_mask(islands, cx))
+            })
     }
 
     pub fn for_window(window: &Window, cx: &App) -> Option<Entity<Workspace>> {
@@ -9767,6 +9781,33 @@ impl Focusable for Workspace {
 #[derive(Clone)]
 struct DraggedDock(DockPosition);
 
+/// Draws an island's gap and rounded corners on top of its content.
+///
+/// GPUI clips children to rectangles, so instead of clipping the content to a
+/// rounded shape, this paints a border in the window background colour over
+/// the island's padding. The border's inner edge has the island's corner
+/// radius, which masks the content's square corners.
+///
+/// A border's outer edge is rounded too, and with a thin border that curve
+/// cuts into the island's corner. The mask is grown outwards just enough for
+/// the outer curve to clear the island; any part outside the gap is clipped by
+/// the parent or lands on the neighbouring gap, which is the same colour.
+fn island_corner_mask(islands: IslandsLayout, cx: &App) -> Div {
+    let half_gap = islands.gap / 2.;
+    let radius = islands.corner_radius;
+    let overhang = (radius * (std::f32::consts::SQRT_2 - 1.) - half_gap + 1.).clamp(0., half_gap);
+    let border = px(half_gap + overhang);
+    div()
+        .absolute()
+        .top(px(-overhang))
+        .left(px(-overhang))
+        .right(px(-overhang))
+        .bottom(px(-overhang))
+        .border(border)
+        .border_color(cx.theme().colors().background)
+        .rounded(border + px(radius))
+}
+
 impl Render for DraggedDock {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         gpui::Empty
@@ -9900,9 +9941,14 @@ impl Render for Workspace {
                             .flex()
                             .flex_col()
                             .overflow_hidden()
-                            .border_t_1()
-                            .border_b_1()
-                            .border_color(colors.border)
+                            .map(|this| {
+                                let islands = WorkspaceSettings::get_global(cx).islands;
+                                if islands.enabled {
+                                    this.p(px(islands.gap / 2.))
+                                } else {
+                                    this.border_t_1().border_b_1().border_color(colors.border)
+                                }
+                            })
                             .child({
                                 let this = cx.entity();
                                 canvas(

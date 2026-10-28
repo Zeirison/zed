@@ -11,6 +11,15 @@ pub use settings::{
 };
 use settings::{CommandAliasTarget, SettingsStore};
 
+/// Resolved settings for the islands layout, where the editor area and docks
+/// are drawn as rounded panels separated by gaps.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct IslandsLayout {
+    pub enabled: bool,
+    pub gap: f32,
+    pub corner_radius: f32,
+}
+
 #[derive(RegisterSetting)]
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
@@ -18,6 +27,7 @@ pub struct WorkspaceSettings {
     pub pane_split_direction_horizontal: settings::PaneSplitDirectionHorizontal,
     pub pane_split_direction_vertical: settings::PaneSplitDirectionVertical,
     pub centered_layout: settings::CenteredLayoutSettings,
+    pub islands: IslandsLayout,
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
@@ -118,6 +128,14 @@ impl Settings for WorkspaceSettings {
             pane_split_direction_horizontal: workspace.pane_split_direction_horizontal.unwrap(),
             pane_split_direction_vertical: workspace.pane_split_direction_vertical.unwrap(),
             centered_layout: workspace.centered_layout.unwrap(),
+            islands: {
+                let islands = workspace.islands.unwrap();
+                IslandsLayout {
+                    enabled: islands.enabled.unwrap(),
+                    gap: islands.gap.unwrap().max(0.),
+                    corner_radius: islands.corner_radius.unwrap().max(0.),
+                }
+            },
             confirm_quit: workspace.confirm_quit.unwrap(),
             show_call_status_icon: workspace.show_call_status_icon.unwrap(),
             autosave: workspace.autosave.unwrap(),

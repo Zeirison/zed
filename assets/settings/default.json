@@ -108,6 +108,17 @@
     // workspace when the centered layout is used.
     "right_padding": 0.2,
   },
+  // Render the editor area and docks as rounded "islands" separated by gaps,
+  // similar to the JetBrains Islands UI. Pairs well with a theme whose
+  // `background` differs from `panel.background` and `editor.background`.
+  "islands": {
+    // Whether the islands layout is enabled.
+    "enabled": false,
+    // The gap between islands, and around the window edge, in pixels.
+    "gap": 6,
+    // The corner radius of each island, in pixels.
+    "corner_radius": 10,
+  },
   // Image viewer settings
   "image_viewer": {
     // The unit for image file sizes: "binary" (KiB, MiB) or decimal (KB, MB)
