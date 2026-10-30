@@ -1,9 +1,10 @@
 use std::cmp::Ordering;
 
-use gpui::{AnyElement, IntoElement, Stateful};
+use gpui::{AnyElement, Div, Hsla, IntoElement, Stateful};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
+use crate::{islands_control_radius, islands_style};
 
 const START_TAB_SLOT_SIZE: Pixels = px(12.);
 const END_TAB_SLOT_SIZE: Pixels = px(14.);
@@ -141,6 +142,19 @@ impl RenderOnce for Tab {
             }
         };
 
+        if islands_style(cx).enabled {
+            return Self::render_pill(
+                self.div,
+                self.children,
+                self.selected,
+                text_color,
+                tab_bg,
+                start_slot,
+                end_slot,
+                cx,
+            );
+        }
+
         self.div
             .h(Tab::container_height(cx))
             .bg(tab_bg)
@@ -175,6 +189,52 @@ impl RenderOnce for Tab {
                     .text_color(text_color)
                     .child(start_slot)
                     .children(self.children)
+                    .child(end_slot),
+            )
+    }
+}
+
+impl Tab {
+    /// Renders the tab as a rounded pill floating in the tab bar, like the
+    /// editor tabs of the JetBrains Islands UI. Used by the islands layout.
+    #[allow(clippy::too_many_arguments)]
+    fn render_pill(
+        div: Stateful<Div>,
+        children: SmallVec<[AnyElement; 2]>,
+        selected: bool,
+        text_color: Hsla,
+        tab_bg: Hsla,
+        start_slot: Div,
+        end_slot: Div,
+        cx: &App,
+    ) -> Stateful<Div> {
+        let colors = cx.theme().colors();
+        let pill_height = Tab::container_height(cx) - px(8.);
+        div.h(Tab::container_height(cx))
+            .flex()
+            .items_center()
+            .px(px(2.))
+            .cursor_pointer()
+            .child(
+                h_flex()
+                    .group("")
+                    .relative()
+                    .h(pill_height)
+                    .px(DynamicSpacing::Base06.px(cx))
+                    .gap(DynamicSpacing::Base04.rems(cx))
+                    .rounded(islands_control_radius(cx))
+                    .border_1()
+                    .map(|this| {
+                        if selected {
+                            this.bg(tab_bg).border_color(colors.border_selected)
+                        } else {
+                            this.border_color(gpui::transparent_black())
+                                .hover(|style| style.bg(colors.ghost_element_hover))
+                        }
+                    })
+                    .text_color(text_color)
+                    .child(start_slot)
+                    .children(children)
                     .child(end_slot),
             )
     }

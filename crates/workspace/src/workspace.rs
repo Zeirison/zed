@@ -994,6 +994,10 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
 
     cx.on_app_quit(flush_windows_serialization_on_quit).detach();
 
+    sync_islands_style(cx);
+    cx.observe_global::<SettingsStore>(sync_islands_style)
+        .detach();
+
     cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx))
         .on_action(|_: &Reload, cx| reload(cx))
         .on_action(|action: &Open, cx: &mut App| {
@@ -9780,6 +9784,19 @@ impl Focusable for Workspace {
 
 #[derive(Clone)]
 struct DraggedDock(DockPosition);
+
+/// Mirrors the islands layout settings into [`ui::IslandsStyle`], so that UI
+/// components such as tabs can match the layout.
+fn sync_islands_style(cx: &mut App) {
+    let islands = WorkspaceSettings::get_global(cx).islands;
+    let style = ui::IslandsStyle {
+        enabled: islands.enabled,
+        corner_radius: px(islands.corner_radius),
+    };
+    if cx.try_global::<ui::IslandsStyle>() != Some(&style) {
+        cx.set_global(style);
+    }
+}
 
 /// Draws an island's gap and rounded corners on top of its content.
 ///

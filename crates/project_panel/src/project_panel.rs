@@ -91,6 +91,8 @@ use crate::{
     undo::{Change, UndoManager, already_exists_error, project_path_display},
 };
 
+/// Horizontal inset of entry rows when the islands layout is enabled.
+const ISLANDS_ROW_INSET: Pixels = px(6.);
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
@@ -6269,10 +6271,18 @@ impl ProjectPanel {
                 },
             )
             .cursor_pointer()
-            .rounded_none()
+            .map(|this| {
+                // In the islands layout rows are inset, rounded highlights,
+                // like the tool window trees of the JetBrains Islands UI.
+                if ui::islands_style(cx).enabled {
+                    this.mx(ISLANDS_ROW_INSET)
+                        .rounded(ui::islands_control_radius(cx))
+                        .border_1()
+                } else {
+                    this.rounded_none().border_1().border_r_2()
+                }
+            })
             .bg(bg_color)
-            .border_1()
-            .border_r_2()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
             .when(is_sticky, |this| this.block_mouse_except_scroll())
@@ -7825,6 +7835,12 @@ impl Render for ProjectPanel {
 
                                             let indent_size = params.indent_size;
                                             let item_height = params.item_height;
+                                            // Rows are inset in the islands layout.
+                                            let row_inset = if ui::islands_style(cx).enabled {
+                                                ISLANDS_ROW_INSET
+                                            } else {
+                                                px(0.)
+                                            };
 
                                             params
                                                 .indent_guides
@@ -7839,7 +7855,8 @@ impl Render for ProjectPanel {
                                                     let bounds = Bounds::new(
                                                         point(
                                                             layout.offset.x * indent_size
-                                                                + LEFT_OFFSET,
+                                                                + LEFT_OFFSET
+                                                                + row_inset,
                                                             layout.offset.y * item_height + offset,
                                                         ),
                                                         size(

@@ -2,6 +2,7 @@ use gpui::{AnyElement, ScrollHandle};
 use smallvec::SmallVec;
 
 use crate::Tab;
+use crate::islands_style;
 use crate::prelude::*;
 
 #[derive(IntoElement, RegisterComponent)]
@@ -91,6 +92,12 @@ impl ParentElement for TabBar {
 
 impl RenderOnce for TabBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        // In the islands layout tabs float as pills, so the bar has no rules.
+        let border_color = if islands_style(cx).enabled {
+            gpui::transparent_black()
+        } else {
+            cx.theme().colors().border
+        };
         div()
             .id(self.id)
             .group("tab_bar")
@@ -107,7 +114,7 @@ impl RenderOnce for TabBar {
                         .px(DynamicSpacing::Base06.rems(cx))
                         .border_b_1()
                         .border_r_1()
-                        .border_color(cx.theme().colors().border)
+                        .border_color(border_color)
                         .children(self.start_children),
                 )
             })
@@ -124,7 +131,7 @@ impl RenderOnce for TabBar {
                             .left_0()
                             .size_full()
                             .border_b_1()
-                            .border_color(cx.theme().colors().border),
+                            .border_color(border_color),
                     )
                     .child(
                         h_flex()
@@ -143,7 +150,7 @@ impl RenderOnce for TabBar {
                         .flex_none()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .px(DynamicSpacing::Base06.rems(cx))
-                        .border_color(cx.theme().colors().border)
+                        .border_color(border_color)
                         .border_b_1()
                         .border_l_1()
                         .children(self.end_children),
