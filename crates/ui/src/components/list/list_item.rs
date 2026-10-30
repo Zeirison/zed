@@ -4,7 +4,7 @@ use component::{Component, ComponentScope, example_group_with_title, single_exam
 use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, Role, px};
 use smallvec::SmallVec;
 
-use crate::{Disclosure, prelude::*};
+use crate::{Disclosure, islands_control_radius, islands_style, prelude::*};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ListItemSpacing {
@@ -402,7 +402,11 @@ impl RenderOnce for ListItem {
                     .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
                     .map(|this| {
                         if self.inset {
-                            this.rounded_sm()
+                            if islands_style(cx).enabled {
+                                this.rounded(islands_control_radius(cx))
+                            } else {
+                                this.rounded_sm()
+                            }
                         } else {
                             // When an item is not inset draw the indent spacing inside of the item
                             this.ml(self.indent_level as f32 * self.indent_step_size)

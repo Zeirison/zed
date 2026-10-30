@@ -1,19 +1,26 @@
 use gpui::{App, Styled, hsla};
 
-use crate::ElevationIndex;
 use crate::prelude::*;
+use crate::{ElevationIndex, islands_style};
+
+fn elevated_rounding<E: Styled>(this: E, cx: &App) -> E {
+    let islands = islands_style(cx);
+    if islands.enabled {
+        this.rounded(islands.corner_radius)
+    } else {
+        this.rounded_lg()
+    }
+}
 
 fn elevated<E: Styled>(this: E, cx: &App, index: ElevationIndex) -> E {
-    this.bg(cx.theme().colors().elevated_surface_background)
-        .rounded_lg()
+    elevated_rounding(this.bg(cx.theme().colors().elevated_surface_background), cx)
         .border_1()
         .border_color(cx.theme().colors().border_variant)
         .shadow(index.shadow(cx))
 }
 
 fn elevated_borderless<E: Styled>(this: E, cx: &mut App, index: ElevationIndex) -> E {
-    this.bg(cx.theme().colors().elevated_surface_background)
-        .rounded_lg()
+    elevated_rounding(this.bg(cx.theme().colors().elevated_surface_background), cx)
         .shadow(index.shadow(cx))
 }
 
