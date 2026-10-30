@@ -379,7 +379,7 @@ jobs:
             echo
             echo "These builds are not signed and don't update themselves."
             echo
-            echo "- **macOS:** open the .dmg, drag Zed to Applications, then run \`xattr -dr com.apple.quarantine /Applications/Zed.app\` (or allow it under System Settings → Privacy & Security)."
+            echo "- **macOS:** open the .dmg, drag Zed Islands to Applications, then run \`xattr -dr com.apple.quarantine \"/Applications/Zed Islands.app\"\` (or allow it under System Settings → Privacy & Security)."
             echo "- **Windows:** SmartScreen will warn about an unknown publisher; choose More info → Run anyway."
             echo "- **Linux:** extract the archive into \`~/.local\` as described in https://zed.dev/docs/linux."
           } > notes.md
