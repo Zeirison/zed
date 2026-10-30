@@ -391,6 +391,17 @@ impl SystemWindowTabs {
             .child(menu)
     }
 
+    /// Whether the tab row is drawn for this window.
+    pub fn is_shown(window: &Window, cx: &App) -> bool {
+        let controller = cx.global::<SystemWindowTabController>();
+        let number_of_tabs = controller
+            .tabs(window.window_handle().window_id())
+            .map_or(1, |tabs| tabs.len().max(1));
+        let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
+        !((!window.tab_bar_visible() && !controller.is_visible())
+            || (!use_system_window_tabs && number_of_tabs == 1))
+    }
+
     fn handle_tab_drop(dragged_tab: &DraggedWindowTab, ix: usize, cx: &mut Context<Self>) {
         SystemWindowTabController::update_tab_position(cx, dragged_tab.id, ix);
     }

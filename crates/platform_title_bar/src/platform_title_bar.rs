@@ -214,6 +214,7 @@ impl Render for PlatformTitleBar {
 
         let button_layout = self.effective_button_layout(&decorations, cx);
         let sidebar = self.sidebar_render_state(cx);
+        let tabs_on_top = ui::islands_style(cx).enabled && SystemWindowTabs::is_shown(window, cx);
 
         let title_bar = h_flex()
             .window_control_area(WindowControlArea::Drag)
@@ -268,7 +269,7 @@ impl Render for PlatformTitleBar {
             .map(|this| {
                 let show_left_controls = !(sidebar.open && sidebar.side == SidebarSide::Left);
 
-                if window.is_fullscreen() || window.is_simple_fullscreen() {
+                if window.is_fullscreen() || window.is_simple_fullscreen() || tabs_on_top {
                     this.pl_2()
                 } else if self.platform_style == PlatformStyle::Mac && show_left_controls {
                     this.pl(px(TRAFFIC_LIGHT_PADDING))
@@ -350,10 +351,28 @@ impl Render for PlatformTitleBar {
                 },
             );
 
-        v_flex()
-            .w_full()
-            .child(title_bar)
-            .child(self.system_window_tabs.clone().into_any_element())
+        let window_tabs = self.system_window_tabs.clone().into_any_element();
+        if tabs_on_top {
+            // Like browser tabs, the project tabs sit above the toolbar of the
+            // selected project and share the row with the traffic lights.
+            return v_flex()
+                .w_full()
+                .child(
+                    div()
+                        .w_full()
+                        .bg(titlebar_color)
+                        .when(
+                            self.platform_style == PlatformStyle::Mac
+                                && !window.is_fullscreen()
+                                && !window.is_simple_fullscreen(),
+                            |this| this.pl(px(TRAFFIC_LIGHT_PADDING)),
+                        )
+                        .child(window_tabs),
+                )
+                .child(title_bar);
+        }
+
+        v_flex().w_full().child(title_bar).child(window_tabs)
     }
 }
 
