@@ -31,8 +31,11 @@ use workspace::{
     ActivatePaneUp, ActivatePreviousPane, DraggedTab, ItemId, MoveItemToPane,
     MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
     PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
-    SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
-    dock::{DockPosition, Panel, PanelEvent, PanelHandle},
+    SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace, WorkspaceSettings,
+    dock::{
+        DockPosition, Panel, PanelEvent, PanelHandle, render_panel_header_controls,
+        render_panel_header_title,
+    },
     item::SerializableItem,
     move_active_item, pane,
 };
@@ -125,8 +128,26 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) {
         let assistant_enabled = self.assistant_enabled;
+        let terminal_panel = cx.entity().downgrade();
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, window, cx| {
+                // In the islands layout the first pane's tab bar doubles as the
+                // panel header, like the terminal tool window in IDEA.
+                let header_panel = terminal_panel.upgrade().filter(|terminal_panel| {
+                    WorkspaceSettings::get_global(cx).islands.enabled
+                        && terminal_panel.read(cx).center.first_pane().entity_id() == cx.entity_id()
+                });
+                let header_title = header_panel.as_ref().map(|terminal_panel| {
+                    div()
+                        .pl_1()
+                        .pr_2()
+                        .child(render_panel_header_title(terminal_panel, window, cx))
+                        .into_any_element()
+                });
+                let header_controls = header_panel.map(|terminal_panel| {
+                    render_panel_header_controls(Arc::new(terminal_panel), window, cx)
+                        .into_any_element()
+                });
                 let split_context = pane
                     .active_item()
                     .and_then(|item| item.downcast::<TerminalView>())
@@ -139,7 +160,7 @@ impl TerminalPanel {
                     && !pane.context_menu_focused(window, cx)
                     && !has_focused_rename_editor
                 {
-                    return (None, None);
+                    return (header_title, header_controls);
                 }
                 let focus_handle = pane.focus_handle(cx);
                 let right_children = h_flex()
@@ -219,9 +240,9 @@ impl TerminalPanel {
                                 )
                             })
                     })
-                    .into_any_element()
-                    .into();
-                (None, right_children)
+                    .children(header_controls)
+                    .into_any_element();
+                (header_title, Some(right_children))
             });
         });
     }
@@ -1794,6 +1815,10 @@ impl Panel for TerminalPanel {
         } else {
             None
         }
+    }
+
+    fn draws_own_islands_header(&self) -> bool {
+        true
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {

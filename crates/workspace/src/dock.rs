@@ -102,6 +102,11 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn is_agent_panel(&self) -> bool {
         false
     }
+    /// Whether the panel draws its own header in the islands layout, in which
+    /// case the dock does not add one.
+    fn draws_own_islands_header(&self) -> bool {
+        false
+    }
     /// Buttons shown in the panel's header row when the islands layout is enabled.
     fn header_actions(&self, _window: &Window, _cx: &App) -> Vec<PanelHeaderAction> {
         Vec::new()
@@ -145,6 +150,7 @@ pub trait PanelHandle: Send + Sync {
     fn enabled(&self, cx: &App) -> bool;
     fn is_agent_panel(&self, cx: &App) -> bool;
     fn header_actions(&self, window: &Window, cx: &App) -> Vec<PanelHeaderAction>;
+    fn draws_own_islands_header(&self, cx: &App) -> bool;
     fn hide_button_setting(&self, cx: &App) -> Option<HideStatusItem>;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
@@ -281,6 +287,10 @@ where
 
     fn header_actions(&self, window: &Window, cx: &App) -> Vec<PanelHeaderAction> {
         self.read(cx).header_actions(window, cx)
+    }
+
+    fn draws_own_islands_header(&self, cx: &App) -> bool {
+        self.read(cx).draws_own_islands_header()
     }
 
     fn hide_button_setting(&self, cx: &App) -> Option<HideStatusItem> {
@@ -1249,71 +1259,6 @@ impl Dock {
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let title = panel
-            .icon_tooltip(window, cx)
-            .map(|tooltip| tooltip.trim_end_matches(" Panel").to_string())
-            .unwrap_or_else(|| panel.persistent_name().to_string());
-        let dock_position = self.position;
-        let hide_action = self.toggle_action();
-        let hide_tooltip: SharedString = format!("Hide {title}").into();
-
-        let action_button = {
-            let panel = panel.clone();
-            move |id: &'static str,
-                  icon: IconName,
-                  tooltip: SharedString,
-                  action: Box<dyn Action>| {
-                let panel = panel.clone();
-                IconButton::new(id, icon)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .tooltip(Tooltip::text(tooltip))
-                    .on_click(move |_, window, cx| {
-                        window.focus(&panel.panel_focus_handle(cx), cx);
-                        window.dispatch_action(action.boxed_clone(), cx);
-                    })
-            }
-        };
-
-        let options_menu = {
-            let panel = panel.clone();
-            PopoverMenu::new("panel-header-options")
-                .trigger_with_tooltip(
-                    IconButton::new("panel-header-options-trigger", IconName::IslandsMore)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted),
-                    Tooltip::text("Options"),
-                )
-                .anchor(Anchor::TopRight)
-                .menu(move |window, cx| {
-                    let panel = panel.clone();
-                    Some(ContextMenu::build(window, cx, |mut menu, _, cx| {
-                        for position in [
-                            DockPosition::Left,
-                            DockPosition::Right,
-                            DockPosition::Bottom,
-                        ] {
-                            if panel.position_is_valid(position, cx) {
-                                let is_current = position == dock_position;
-                                let panel = panel.clone();
-                                menu = menu.toggleable_entry(
-                                    format!("Dock {}", position.label()),
-                                    is_current,
-                                    IconPosition::Start,
-                                    None,
-                                    move |window, cx| {
-                                        if !is_current {
-                                            panel.set_position(position, window, cx);
-                                        }
-                                    },
-                                );
-                            }
-                        }
-                        menu
-                    }))
-                })
-        };
-
         h_flex()
             .id("panel-header")
             .flex_none()
@@ -1322,12 +1267,7 @@ impl Dock {
             .pl_3()
             .pr_1p5()
             .gap_0p5()
-            .child(
-                Label::new(title)
-                    .size(LabelSize::Default)
-                    .weight(FontWeight::SEMIBOLD)
-                    .truncate(),
-            )
+            .child(render_panel_header_title(panel.as_ref(), window, cx))
             .child(div().flex_1())
             .children(panel.header_actions(window, cx).into_iter().map(
                 |PanelHeaderAction {
@@ -1335,15 +1275,9 @@ impl Dock {
                      icon,
                      tooltip,
                      action,
-                 }| action_button(id, icon, tooltip, action),
+                 }| panel_header_button(panel.clone(), id, icon, tooltip, action),
             ))
-            .child(options_menu)
-            .child(action_button(
-                "panel-header-hide",
-                IconName::IslandsHide,
-                hide_tooltip,
-                hide_action,
-            ))
+            .child(render_panel_header_controls(panel, window, cx))
     }
 
     fn dispatch_context(cx: &App) -> KeyContext {
@@ -1403,8 +1337,10 @@ impl Render for Dock {
             let position = self.position;
             let islands_enabled = WorkspaceSettings::get_global(cx).islands.enabled;
             // The agent panel already has a toolbar with its title and controls.
-            let header = (islands_enabled && !entry.panel.is_agent_panel(cx))
-                .then(|| self.render_panel_header(entry.panel.clone(), window, cx));
+            let header = (islands_enabled
+                && !entry.panel.is_agent_panel(cx)
+                && !entry.panel.draws_own_islands_header(cx))
+            .then(|| self.render_panel_header(entry.panel.clone(), window, cx));
             let create_resize_handle = || {
                 let handle = div()
                     .id("resize-handle")
@@ -1769,6 +1705,110 @@ impl Render for PanelButtons {
             })
             .into_any_element()
     }
+}
+
+fn panel_header_title(panel: &dyn PanelHandle, window: &Window, cx: &App) -> String {
+    panel
+        .icon_tooltip(window, cx)
+        .map(|tooltip| tooltip.trim_end_matches(" Panel").to_string())
+        .unwrap_or_else(|| panel.persistent_name().to_string())
+}
+
+/// The bold panel name that starts a panel header in the islands layout.
+pub fn render_panel_header_title(
+    panel: &dyn PanelHandle,
+    window: &Window,
+    cx: &App,
+) -> impl IntoElement {
+    Label::new(panel_header_title(panel, window, cx))
+        .size(LabelSize::Default)
+        .weight(FontWeight::SEMIBOLD)
+        .truncate()
+}
+
+fn panel_header_button(
+    panel: Arc<dyn PanelHandle>,
+    id: &'static str,
+    icon: IconName,
+    tooltip: SharedString,
+    action: Box<dyn Action>,
+) -> IconButton {
+    IconButton::new(id, icon)
+        .icon_size(IconSize::Small)
+        .icon_color(Color::Muted)
+        .tooltip(Tooltip::text(tooltip))
+        .on_click(move |_, window, cx| {
+            window.focus(&panel.panel_focus_handle(cx), cx);
+            window.dispatch_action(action.boxed_clone(), cx);
+        })
+}
+
+/// The options menu and hide button that end a panel header in the islands
+/// layout. Panels that draw their own header, such as the terminal panel,
+/// use this to stay consistent with the rest.
+pub fn render_panel_header_controls(
+    panel: Arc<dyn PanelHandle>,
+    window: &Window,
+    cx: &App,
+) -> impl IntoElement {
+    let dock_position = panel.position(window, cx);
+    let hide_action = match dock_position {
+        DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),
+        DockPosition::Bottom => crate::ToggleBottomDock.boxed_clone(),
+        DockPosition::Right => crate::ToggleRightDock.boxed_clone(),
+    };
+    let hide_tooltip: SharedString =
+        format!("Hide {}", panel_header_title(panel.as_ref(), window, cx)).into();
+
+    let options_menu = {
+        let panel = panel.clone();
+        PopoverMenu::new("panel-header-options")
+            .trigger_with_tooltip(
+                IconButton::new("panel-header-options-trigger", IconName::IslandsMore)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted),
+                Tooltip::text("Options"),
+            )
+            .anchor(Anchor::TopRight)
+            .menu(move |window, cx| {
+                let panel = panel.clone();
+                Some(ContextMenu::build(window, cx, |mut menu, _, cx| {
+                    for position in [
+                        DockPosition::Left,
+                        DockPosition::Right,
+                        DockPosition::Bottom,
+                    ] {
+                        if panel.position_is_valid(position, cx) {
+                            let is_current = position == dock_position;
+                            let panel = panel.clone();
+                            menu = menu.toggleable_entry(
+                                format!("Dock {}", position.label()),
+                                is_current,
+                                IconPosition::Start,
+                                None,
+                                move |window, cx| {
+                                    if !is_current {
+                                        panel.set_position(position, window, cx);
+                                    }
+                                },
+                            );
+                        }
+                    }
+                    menu
+                }))
+            })
+    };
+
+    h_flex()
+        .gap_0p5()
+        .child(options_menu)
+        .child(panel_header_button(
+            panel,
+            "panel-header-hide",
+            IconName::IslandsHide,
+            hide_tooltip,
+            hide_action,
+        ))
 }
 
 fn tool_window_stripe_icon(icon: IconName) -> IconName {
