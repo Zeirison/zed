@@ -121,6 +121,9 @@
     // Whether to show panel toggles in vertical stripes along the window
     // edges instead of in the status bar.
     "tool_window_stripes": true,
+    // Whether to show the active file's path and the symbols at the cursor
+    // in the status bar.
+    "navigation_path": true,
   },
   // Image viewer settings
   "image_viewer": {

@@ -726,6 +726,11 @@ pub struct IslandsSettings {
     ///
     /// Default: true
     pub tool_window_stripes: Option<bool>,
+    /// Whether to show the active file's path and the symbols at the cursor
+    /// in the status bar.
+    ///
+    /// Default: true
+    pub navigation_path: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]

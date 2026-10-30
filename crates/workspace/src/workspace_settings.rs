@@ -19,11 +19,16 @@ pub struct IslandsLayout {
     pub gap: f32,
     pub corner_radius: f32,
     pub tool_window_stripes: bool,
+    pub navigation_path: bool,
 }
 
 impl IslandsLayout {
     pub fn show_tool_window_stripes(&self) -> bool {
         self.enabled && self.tool_window_stripes
+    }
+
+    pub fn show_navigation_path(&self) -> bool {
+        self.enabled && self.navigation_path
     }
 }
 
@@ -142,6 +147,7 @@ impl Settings for WorkspaceSettings {
                     gap: islands.gap.unwrap().max(0.),
                     corner_radius: islands.corner_radius.unwrap().max(0.),
                     tool_window_stripes: islands.tool_window_stripes.unwrap(),
+                    navigation_path: islands.navigation_path.unwrap(),
                 }
             },
             confirm_quit: workspace.confirm_quit.unwrap(),
