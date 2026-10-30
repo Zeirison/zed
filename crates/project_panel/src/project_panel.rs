@@ -75,7 +75,7 @@ use util::{
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenMode, OpenOptions, OpenVisible, PreviewTabsSettings,
     SelectedEntry, SplitDirection, Workspace, WorkspaceSettings, copy_file_permalink,
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelHeaderAction},
     focus_follows_mouse::FocusFollowsMouse as _,
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
     open_file_permalink,
@@ -8300,6 +8300,23 @@ impl Panel for ProjectPanel {
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
         Some("Project Panel")
+    }
+
+    fn header_actions(&self, _window: &Window, _cx: &App) -> Vec<PanelHeaderAction> {
+        vec![
+            PanelHeaderAction {
+                id: "project-panel-header-new-file",
+                icon: IconName::Plus,
+                tooltip: "New File".into(),
+                action: Box::new(NewFile),
+            },
+            PanelHeaderAction {
+                id: "project-panel-header-collapse-all",
+                icon: IconName::ListCollapse,
+                tooltip: "Collapse All".into(),
+                action: Box::new(CollapseAllEntries),
+            },
+        ]
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

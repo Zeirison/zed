@@ -9,15 +9,15 @@ use db::kvp::KeyValueStore;
 
 use gpui::{
     Action, Anchor, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
-    Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
-    px,
+    Focusable, FontWeight, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent,
+    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window,
+    deferred, div, px,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, TerminalDockPosition};
 use std::sync::Arc;
 use ui::{
-    ContextMenu, CountBadge, Divider, DividerColor, IconButton, Tooltip, prelude::*,
+    ContextMenu, CountBadge, Divider, DividerColor, IconButton, PopoverMenu, Tooltip, prelude::*,
     right_click_menu,
 };
 use util::ResultExt as _;
@@ -32,6 +32,13 @@ pub enum PanelEvent {
 }
 
 pub use proto::PanelId;
+
+pub struct PanelHeaderAction {
+    pub id: &'static str,
+    pub icon: IconName,
+    pub tooltip: SharedString,
+    pub action: Box<dyn Action>,
+}
 
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
@@ -95,6 +102,10 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn is_agent_panel(&self) -> bool {
         false
     }
+    /// Buttons shown in the panel's header row when the islands layout is enabled.
+    fn header_actions(&self, _window: &Window, _cx: &App) -> Vec<PanelHeaderAction> {
+        Vec::new()
+    }
     /// Returns metadata describing how to hide this panel's button from the
     /// status bar by writing to user settings. Implementors should return
     /// `None` if the panel button cannot be hidden through settings.
@@ -133,6 +144,7 @@ pub trait PanelHandle: Send + Sync {
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
     fn is_agent_panel(&self, cx: &App) -> bool;
+    fn header_actions(&self, window: &Window, cx: &App) -> Vec<PanelHeaderAction>;
     fn hide_button_setting(&self, cx: &App) -> Option<HideStatusItem>;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
@@ -265,6 +277,10 @@ where
 
     fn is_agent_panel(&self, cx: &App) -> bool {
         self.read(cx).is_agent_panel()
+    }
+
+    fn header_actions(&self, window: &Window, cx: &App) -> Vec<PanelHeaderAction> {
+        self.read(cx).header_actions(window, cx)
     }
 
     fn hide_button_setting(&self, cx: &App) -> Option<HideStatusItem> {
@@ -1227,6 +1243,109 @@ impl Dock {
         }
     }
 
+    fn render_panel_header(
+        &self,
+        panel: Arc<dyn PanelHandle>,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let title = panel
+            .icon_tooltip(window, cx)
+            .map(|tooltip| tooltip.trim_end_matches(" Panel").to_string())
+            .unwrap_or_else(|| panel.persistent_name().to_string());
+        let dock_position = self.position;
+        let hide_action = self.toggle_action();
+        let hide_tooltip: SharedString = format!("Hide {title}").into();
+
+        let action_button = {
+            let panel = panel.clone();
+            move |id: &'static str,
+                  icon: IconName,
+                  tooltip: SharedString,
+                  action: Box<dyn Action>| {
+                let panel = panel.clone();
+                IconButton::new(id, icon)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text(tooltip))
+                    .on_click(move |_, window, cx| {
+                        window.focus(&panel.panel_focus_handle(cx), cx);
+                        window.dispatch_action(action.boxed_clone(), cx);
+                    })
+            }
+        };
+
+        let options_menu = {
+            let panel = panel.clone();
+            PopoverMenu::new("panel-header-options")
+                .trigger_with_tooltip(
+                    IconButton::new("panel-header-options-trigger", IconName::Ellipsis)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted),
+                    Tooltip::text("Options"),
+                )
+                .anchor(Anchor::TopRight)
+                .menu(move |window, cx| {
+                    let panel = panel.clone();
+                    Some(ContextMenu::build(window, cx, |mut menu, _, cx| {
+                        for position in [
+                            DockPosition::Left,
+                            DockPosition::Right,
+                            DockPosition::Bottom,
+                        ] {
+                            if panel.position_is_valid(position, cx) {
+                                let is_current = position == dock_position;
+                                let panel = panel.clone();
+                                menu = menu.toggleable_entry(
+                                    format!("Dock {}", position.label()),
+                                    is_current,
+                                    IconPosition::Start,
+                                    None,
+                                    move |window, cx| {
+                                        if !is_current {
+                                            panel.set_position(position, window, cx);
+                                        }
+                                    },
+                                );
+                            }
+                        }
+                        menu
+                    }))
+                })
+        };
+
+        h_flex()
+            .id("panel-header")
+            .flex_none()
+            .h(px(34.))
+            .w_full()
+            .pl_3()
+            .pr_1p5()
+            .gap_0p5()
+            .child(
+                Label::new(title)
+                    .size(LabelSize::Default)
+                    .weight(FontWeight::SEMIBOLD)
+                    .truncate(),
+            )
+            .child(div().flex_1())
+            .children(panel.header_actions(window, cx).into_iter().map(
+                |PanelHeaderAction {
+                     id,
+                     icon,
+                     tooltip,
+                     action,
+                 }| action_button(id, icon, tooltip, action),
+            ))
+            .child(options_menu)
+            .child(action_button(
+                "panel-header-hide",
+                IconName::Dash,
+                hide_tooltip,
+                hide_action,
+            ))
+    }
+
     fn dispatch_context(cx: &App) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults(cx.platform_info().os);
         dispatch_context.add("Dock");
@@ -1278,10 +1397,14 @@ impl Dock {
 }
 
 impl Render for Dock {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context(cx);
         if let Some(entry) = self.visible_entry() {
             let position = self.position;
+            let islands_enabled = WorkspaceSettings::get_global(cx).islands.enabled;
+            // The agent panel already has a toolbar with its title and controls.
+            let header = (islands_enabled && !entry.panel.is_agent_panel(cx))
+                .then(|| self.render_panel_header(entry.panel.clone(), window, cx));
             let create_resize_handle = || {
                 let handle = div()
                     .id("resize-handle")
@@ -1370,11 +1493,14 @@ impl Render for Dock {
                             Axis::Horizontal => this.w_full().h_full(),
                             Axis::Vertical => this.h_full().w_full(),
                         })
+                        .when_some(header, |this, header| this.flex().flex_col().child(header))
                         .child(
-                            entry
-                                .panel
-                                .to_any()
-                                .cached(StyleRefinement::default().v_flex().size_full()),
+                            div().flex_1().min_h_0().size_full().child(
+                                entry
+                                    .panel
+                                    .to_any()
+                                    .cached(StyleRefinement::default().v_flex().size_full()),
+                            ),
                         ),
                 )
                 .when(self.resizable(cx), |this| {
