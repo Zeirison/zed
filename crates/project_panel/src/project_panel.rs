@@ -8306,13 +8306,13 @@ impl Panel for ProjectPanel {
         vec![
             PanelHeaderAction {
                 id: "project-panel-header-new-file",
-                icon: IconName::Plus,
+                icon: IconName::IslandsAdd,
                 tooltip: "New File".into(),
                 action: Box::new(NewFile),
             },
             PanelHeaderAction {
                 id: "project-panel-header-collapse-all",
-                icon: IconName::ListCollapse,
+                icon: IconName::IslandsCollapseAll,
                 tooltip: "Collapse All".into(),
                 action: Box::new(CollapseAllEntries),
             },

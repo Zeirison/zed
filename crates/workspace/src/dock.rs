@@ -1279,7 +1279,7 @@ impl Dock {
             let panel = panel.clone();
             PopoverMenu::new("panel-header-options")
                 .trigger_with_tooltip(
-                    IconButton::new("panel-header-options-trigger", IconName::Ellipsis)
+                    IconButton::new("panel-header-options-trigger", IconName::IslandsMore)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted),
                     Tooltip::text("Options"),
@@ -1340,7 +1340,7 @@ impl Dock {
             .child(options_menu)
             .child(action_button(
                 "panel-header-hide",
-                IconName::Dash,
+                IconName::IslandsHide,
                 hide_tooltip,
                 hide_action,
             ))
@@ -1569,6 +1569,11 @@ impl Render for PanelButtons {
             .enumerate()
             .filter_map(|(i, entry)| {
                 let icon = entry.panel.icon(window, cx)?;
+                let icon = if in_stripe {
+                    tool_window_stripe_icon(icon)
+                } else {
+                    icon
+                };
                 let icon_tooltip = entry
                     .panel
                     .icon_tooltip(window, cx)
@@ -1692,7 +1697,7 @@ impl Render for PanelButtons {
                         })
                         .anchor(menu_anchor)
                         .attach(menu_attach)
-                        .trigger(move |is_active, _window, _cx| {
+                        .trigger(move |is_active, _window, cx| {
                             // Include active state in element ID to invalidate the cached
                             // tooltip when panel state changes (e.g., via keyboard shortcut)
                             let button = IconButton::new((name, is_active_button as u64), icon)
@@ -1701,7 +1706,10 @@ impl Render for PanelButtons {
                                 } else {
                                     IconSize::Small
                                 })
-                                .when(in_stripe, |this| this.size(ButtonSize::Large))
+                                .when(in_stripe, |this| {
+                                    this.size(ButtonSize::Large)
+                                        .selected_icon_color(Color::Default)
+                                })
                                 .toggle_state(is_active_button)
                                 .tab_index(0isize)
                                 .aria_label(icon_tooltip)
@@ -1718,13 +1726,20 @@ impl Render for PanelButtons {
                                     })
                                 });
 
-                            div().relative().child(button).when_some(
-                                icon_label
-                                    .clone()
-                                    .filter(|_| !is_active_button)
-                                    .and_then(|label| label.parse::<usize>().ok()),
-                                |this, count| this.child(CountBadge::new(count)),
-                            )
+                            div()
+                                .relative()
+                                .when(in_stripe && is_active_button, |this| {
+                                    this.rounded_md()
+                                        .bg(cx.theme().colors().ghost_element_active)
+                                })
+                                .child(button)
+                                .when_some(
+                                    icon_label
+                                        .clone()
+                                        .filter(|_| !is_active_button)
+                                        .and_then(|label| label.parse::<usize>().ok()),
+                                    |this, count| this.child(CountBadge::new(count)),
+                                )
                         }),
                 )
             })
@@ -1753,6 +1768,18 @@ impl Render for PanelButtons {
                 this.child(Divider::vertical().color(DividerColor::Border))
             })
             .into_any_element()
+    }
+}
+
+fn tool_window_stripe_icon(icon: IconName) -> IconName {
+    match icon {
+        IconName::FileTree => IconName::IslandsProject,
+        IconName::TerminalAlt | IconName::Terminal => IconName::IslandsTerminal,
+        IconName::GitBranch => IconName::IslandsCommit,
+        IconName::ListTree => IconName::IslandsStructure,
+        IconName::Debug => IconName::IslandsDebug,
+        IconName::UserGroup => IconName::IslandsUsers,
+        icon => icon,
     }
 }
 
