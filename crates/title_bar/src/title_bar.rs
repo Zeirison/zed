@@ -368,6 +368,9 @@ impl Render for TitleBar {
                 .pr_1()
                 .gap_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .when(ui::islands_style(cx).enabled, |this| {
+                    this.child(render_run_widget())
+                })
                 .child(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
                 .child(self.update_version.clone())
@@ -829,17 +832,38 @@ impl TitleBar {
             .map(|mw| mw.read(cx).project_group_keys())
             .unwrap_or_default();
 
+        let menu = move |window: &mut Window, cx: &mut App| {
+            Some(recent_projects::RecentProjects::popover(
+                workspace.clone(),
+                window_project_groups.clone(),
+                None,
+                focus_handle.clone(),
+                window,
+                cx,
+            ))
+        };
+        let tooltip = move |_window: &mut Window, cx: &mut App| {
+            Tooltip::for_action("Recent Projects", &zed_actions::OpenRecent::default(), cx)
+        };
+
+        if ui::islands_style(cx).enabled {
+            return PopoverMenu::new("recent-projects-menu")
+                .menu(menu)
+                .trigger_with_tooltip(
+                    islands_widget_trigger(
+                        "project_name_trigger",
+                        Some(project_avatar(&display_name, cx).into_any_element()),
+                        display_name,
+                    )
+                    .when(!is_project_selected, |this| this.opacity(0.6)),
+                    tooltip,
+                )
+                .anchor(gpui::Anchor::TopLeft)
+                .into_any_element();
+        }
+
         PopoverMenu::new("recent-projects-menu")
-            .menu(move |window, cx| {
-                Some(recent_projects::RecentProjects::popover(
-                    workspace.clone(),
-                    window_project_groups.clone(),
-                    None,
-                    focus_handle.clone(),
-                    window,
-                    cx,
-                ))
-            })
+            .menu(menu)
             .trigger_with_tooltip(
                 Button::new("project_name_trigger", display_name)
                     .label_size(LabelSize::Small)
@@ -853,9 +877,7 @@ impl TitleBar {
                     })
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .when(!is_project_selected, |s| s.color(Color::Muted)),
-                move |_window, cx| {
-                    Tooltip::for_action("Recent Projects", &zed_actions::OpenRecent::default(), cx)
-                },
+                tooltip,
             )
             .anchor(gpui::Anchor::TopLeft)
             .into_any_element()
@@ -1049,6 +1071,14 @@ impl TitleBar {
                                 .color(branch_icon_color),
                         )
                 };
+
+                let trigger = trigger.when(ui::islands_style(cx).enabled, |this| {
+                    this.end_icon(
+                        Icon::new(IconName::ChevronDown)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                });
 
                 PopoverMenu::new("branch-menu")
                     .menu(move |window, cx| {
@@ -1424,4 +1454,104 @@ impl TitleBar {
             })
             .anchor(Anchor::TopRight)
     }
+}
+
+/// A title bar dropdown in the style of the JetBrains Islands main toolbar:
+/// an optional leading visual, a label and a chevron.
+fn islands_widget_trigger(
+    id: &'static str,
+    leading: Option<AnyElement>,
+    label: impl Into<SharedString>,
+) -> ButtonLike {
+    ButtonLike::new(id)
+        .tab_index(0isize)
+        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+        .child(
+            h_flex()
+                .gap_1p5()
+                .px_1()
+                .children(leading)
+                .child(Label::new(label).size(LabelSize::Small))
+                .child(
+                    Icon::new(IconName::ChevronDown)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                ),
+        )
+}
+
+/// A rounded square with the project's initials, coloured by a hash of its
+/// name, like the project widget in JetBrains IDEs.
+fn project_avatar(name: &str, cx: &App) -> impl IntoElement {
+    // Accent colours of the Islands title bar gradients.
+    const COLORS: [u32; 9] = [
+        0xB45E43, 0xA56906, 0x6B8E23, 0x2F7FB0, 0x5462C9, 0xA14D78, 0x8A5BAE, 0x2E8B7A, 0x4E9D6C,
+    ];
+    let words: Vec<&str> = name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    let initials: String = match words.as_slice() {
+        [] => "?".to_string(),
+        [word] => word.chars().take(2).collect(),
+        [first, second, ..] => first
+            .chars()
+            .take(1)
+            .chain(second.chars().take(1))
+            .collect(),
+    };
+    let hash = name.bytes().fold(0u32, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(byte as u32)
+    });
+    let color = gpui::rgb(COLORS[hash as usize % COLORS.len()]);
+
+    div()
+        .flex_none()
+        .size(px(18.))
+        .rounded(px(4.))
+        .bg(color)
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(gpui::white())
+        .text_size(px(9.))
+        .font_weight(gpui::FontWeight::BOLD)
+        .child(initials.to_uppercase())
+        .when(cx.theme().appearance().is_light(), |this| this.opacity(0.9))
+}
+
+/// The run widget of the JetBrains main toolbar, mapped onto Zed tasks and
+/// the debugger.
+fn render_run_widget() -> impl IntoElement {
+    h_flex()
+        .gap_0p5()
+        .child(
+            islands_widget_trigger("run_task_picker", None, "Run Task").on_click(
+                |_, window, cx| window.dispatch_action(Box::new(zed_actions::Spawn::modal()), cx),
+            ),
+        )
+        .child(
+            IconButton::new("rerun_task", IconName::PlayFilled)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Success)
+                .tooltip(|_window, cx| {
+                    Tooltip::for_action("Rerun Last Task", &zed_actions::Rerun::default(), cx)
+                })
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(zed_actions::Rerun::default()), cx)
+                }),
+        )
+        .child(
+            IconButton::new("start_debugging", IconName::Debug)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Success)
+                .tooltip(Tooltip::text("Start Debugging"))
+                .on_click(|_, window, cx| {
+                    // The debugger's actions live in a crate the title bar
+                    // doesn't depend on, so the action is built by name.
+                    if let Some(action) = cx.build_action("debugger::Start", None).log_err() {
+                        window.dispatch_action(action, cx);
+                    }
+                }),
+        )
 }
