@@ -205,10 +205,10 @@ impl ReleaseChannel {
     /// Returns the display name for this [`ReleaseChannel`].
     pub fn display_name(&self) -> &'static str {
         match self {
-            ReleaseChannel::Dev => "Zed Dev",
-            ReleaseChannel::Nightly => "Zed Nightly",
-            ReleaseChannel::Preview => "Zed Preview",
-            ReleaseChannel::Stable => "Zed",
+            ReleaseChannel::Dev => "Zed Islands Dev",
+            ReleaseChannel::Nightly => "Zed Islands Nightly",
+            ReleaseChannel::Preview => "Zed Islands Preview",
+            ReleaseChannel::Stable => "Zed Islands",
         }
     }
 
@@ -227,10 +227,10 @@ impl ReleaseChannel {
     /// This also has to match the bundle identifier for Zed on macOS.
     pub fn app_id(&self) -> &'static str {
         match self {
-            ReleaseChannel::Dev => "dev.zed.Zed-Dev",
-            ReleaseChannel::Nightly => "dev.zed.Zed-Nightly",
-            ReleaseChannel::Preview => "dev.zed.Zed-Preview",
-            ReleaseChannel::Stable => "dev.zed.Zed",
+            ReleaseChannel::Dev => "io.github.zeirison.ZedIslands-Dev",
+            ReleaseChannel::Nightly => "io.github.zeirison.ZedIslands-Nightly",
+            ReleaseChannel::Preview => "io.github.zeirison.ZedIslands-Preview",
+            ReleaseChannel::Stable => "io.github.zeirison.ZedIslands",
         }
     }
 
