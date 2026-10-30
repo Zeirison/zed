@@ -731,6 +731,12 @@ pub struct IslandsSettings {
     ///
     /// Default: true
     pub navigation_path: Option<bool>,
+    /// Whether to use the tighter metrics of IDEA's compact mode: a 4px gap,
+    /// an 8px corner radius and shorter panel headers. Overrides `gap` and
+    /// `corner_radius`.
+    ///
+    /// Default: false
+    pub compact: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]

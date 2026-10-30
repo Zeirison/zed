@@ -124,6 +124,10 @@
     // Whether to show the active file's path and the symbols at the cursor
     // in the status bar.
     "navigation_path": true,
+    // Whether to use the tighter metrics of IDEA's compact mode: a 4px gap,
+    // an 8px corner radius and shorter panel headers. Overrides "gap" and
+    // "corner_radius".
+    "compact": false,
   },
   // Image viewer settings
   "image_viewer": {

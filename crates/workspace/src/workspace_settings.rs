@@ -20,6 +20,7 @@ pub struct IslandsLayout {
     pub corner_radius: f32,
     pub tool_window_stripes: bool,
     pub navigation_path: bool,
+    pub compact: bool,
 }
 
 impl IslandsLayout {
@@ -142,10 +143,20 @@ impl Settings for WorkspaceSettings {
             centered_layout: workspace.centered_layout.unwrap(),
             islands: {
                 let islands = workspace.islands.unwrap();
+                let compact = islands.compact.unwrap();
                 IslandsLayout {
                     enabled: islands.enabled.unwrap(),
-                    gap: islands.gap.unwrap().max(0.),
-                    corner_radius: islands.corner_radius.unwrap().max(0.),
+                    gap: if compact {
+                        4.
+                    } else {
+                        islands.gap.unwrap().max(0.)
+                    },
+                    corner_radius: if compact {
+                        8.
+                    } else {
+                        islands.corner_radius.unwrap().max(0.)
+                    },
+                    compact,
                     tool_window_stripes: islands.tool_window_stripes.unwrap(),
                     navigation_path: islands.navigation_path.unwrap(),
                 }

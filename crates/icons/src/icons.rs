@@ -186,6 +186,7 @@ pub enum IconName {
     IslandsHide,
     IslandsMore,
     IslandsProject,
+    IslandsRun,
     IslandsStructure,
     IslandsTerminal,
     IslandsUsers,

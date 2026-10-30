@@ -666,6 +666,7 @@ impl Editor {
             Some(RunnableTaskStatus::Running) => (ui::IconName::PlayOutlined, Color::Accent),
             Some(RunnableTaskStatus::Passed) => (ui::IconName::Check, Color::Success),
             Some(RunnableTaskStatus::Failed) => (ui::IconName::XCircle, Color::Error),
+            None if ui::islands_style(cx).enabled => (ui::IconName::IslandsRun, Color::Success),
             None => (ui::IconName::PlayOutlined, Color::Muted),
         };
 

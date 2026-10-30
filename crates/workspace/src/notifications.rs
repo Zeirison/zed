@@ -1050,6 +1050,14 @@ pub mod simple_message_notification {
 
             let main_content = (self.build_content)(window, cx);
             let line_height = window.line_height();
+            // IDEA balloons always lead with a status icon, show bold titles and
+            // render their actions as accent-colored links.
+            let islands = ui::islands_style(cx).enabled;
+            let link_color = (islands && self.button_style.is_none()).then_some(Color::Accent);
+            let content_icon = self
+                .content_icon
+                .zip(self.content_icon_color)
+                .or(islands.then_some((IconName::Info, Color::Accent)));
 
             let copy_text = self.copy_text.clone();
             let header_actions = h_flex()
@@ -1102,6 +1110,7 @@ pub mod simple_message_notification {
                 .children(self.primary_message.iter().map(|message| {
                     Button::new(("notification-primary", cx.entity_id()), message.clone())
                         .when_some(self.button_style, |button, style| button.style(style))
+                        .when_some(link_color, |button, color| button.color(color))
                         .label_size(LabelSize::Small)
                         .on_click(cx.listener(|this, _, window, cx| {
                             if let Some(on_click) = this.primary_on_click.as_ref() {
@@ -1122,6 +1131,7 @@ pub mod simple_message_notification {
                 .children(self.secondary_message.clone().map(|message| {
                     let button = Button::new(("notification-secondary", cx.entity_id()), message)
                         .when_some(self.button_style, |button, style| button.style(style))
+                        .when_some(link_color, |button, color| button.color(color))
                         .label_size(LabelSize::Small)
                         .on_click(cx.listener(|this, _, window, cx| {
                             if let Some(on_click) = this.secondary_on_click.as_ref() {
@@ -1174,17 +1184,14 @@ pub mod simple_message_notification {
             let body = h_flex()
                 .gap_2()
                 .items_start()
-                .when_some(
-                    self.content_icon.zip(self.content_icon_color),
-                    |el, (icon, color)| {
-                        el.child(
-                            h_flex()
-                                .h(line_height)
-                                .justify_center()
-                                .child(Icon::new(icon).size(IconSize::Small).color(color)),
-                        )
-                    },
-                )
+                .when_some(content_icon, |el, (icon, color)| {
+                    el.child(
+                        h_flex()
+                            .h(line_height)
+                            .justify_center()
+                            .child(Icon::new(icon).size(IconSize::Small).color(color)),
+                    )
+                })
                 .child(
                     v_flex()
                         .flex_1()
@@ -1245,7 +1252,9 @@ pub mod simple_message_notification {
                                         .min_w_0()
                                         .gap_0p5()
                                         .when_some(self.title.clone(), |div, title| {
-                                            div.child(Label::new(title))
+                                            div.child(Label::new(title).when(islands, |label| {
+                                                label.weight(gpui::FontWeight::SEMIBOLD)
+                                            }))
                                         })
                                         .child(div().max_w_96().child(body)),
                                 )

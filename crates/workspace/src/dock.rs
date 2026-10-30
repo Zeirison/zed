@@ -1262,7 +1262,11 @@ impl Dock {
         h_flex()
             .id("panel-header")
             .flex_none()
-            .h(px(34.))
+            .h(if WorkspaceSettings::get_global(cx).islands.compact {
+                px(28.)
+            } else {
+                px(34.)
+            })
             .w_full()
             .pl_3()
             .pr_1p5()

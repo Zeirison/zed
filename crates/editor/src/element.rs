@@ -6210,14 +6210,45 @@ impl EditorElement {
                                 cx.theme().colors().scrollbar_thumb_background
                             }
                         };
-                        window.paint_quad(quad(
-                            thumb_bounds,
-                            Corners::default(),
-                            scrollbar_thumb_color,
-                            scrollbar_edges,
-                            cx.theme().colors().scrollbar_thumb_border,
-                            BorderStyle::Solid,
-                        ));
+                        if ui::islands_style(cx).enabled {
+                            // IDEA draws a thin rounded thumb that widens while hovered.
+                            let inset = match scrollbar_layout.thumb_state {
+                                ScrollbarThumbState::Idle => px(4.),
+                                ScrollbarThumbState::Hovered | ScrollbarThumbState::Dragging => {
+                                    px(2.)
+                                }
+                            };
+                            let thumb_bounds = match axis {
+                                ScrollbarAxis::Horizontal => thumb_bounds.extend(Edges {
+                                    top: -inset,
+                                    bottom: -inset,
+                                    ..Default::default()
+                                }),
+                                ScrollbarAxis::Vertical => thumb_bounds.extend(Edges {
+                                    left: -inset,
+                                    right: -inset,
+                                    ..Default::default()
+                                }),
+                            };
+                            let radius = thumb_bounds.size.along(axis.invert()) / 2.;
+                            window.paint_quad(quad(
+                                thumb_bounds,
+                                Corners::all(radius),
+                                scrollbar_thumb_color,
+                                Edges::default(),
+                                gpui::transparent_black(),
+                                BorderStyle::Solid,
+                            ));
+                        } else {
+                            window.paint_quad(quad(
+                                thumb_bounds,
+                                Corners::default(),
+                                scrollbar_thumb_color,
+                                scrollbar_edges,
+                                cx.theme().colors().scrollbar_thumb_border,
+                                BorderStyle::Solid,
+                            ));
+                        }
 
                         if any_scrollbar_dragged {
                             window.set_window_cursor_style(CursorStyle::Arrow);
