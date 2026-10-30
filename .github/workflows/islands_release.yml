@@ -1,0 +1,404 @@
+# Builds Zed stable releases with the Islands UI changes applied and publishes
+# them as releases of this fork.
+#
+# The Islands commits are developed against upstream `main`, but stable tags
+# live on release branches, so they are cherry-picked onto the tag rather than
+# merged (a merge would pull in every unreleased commit from `main`).
+#
+# When the commits don't apply cleanly, resolve them by hand once:
+#
+#   git fetch https://github.com/zed-industries/zed.git tag vX.Y.Z --no-tags
+#   git switch -c islands/vX.Y.Z vX.Y.Z
+#   git cherry-pick -x $(git rev-list --reverse --no-merges origin/islands-layout --not upstream/main)
+#   # resolve, `git cherry-pick --continue`, then:
+#   git push origin islands/vX.Y.Z
+#
+# and re-run this workflow. An `islands/vX.Y.Z` branch is always used as-is for
+# its tag, and the newest one is also tried for later patch releases.
+#
+# Repository variables:
+#   ISLANDS_BRANCH         branch with the Islands commits (default: islands-layout)
+#   ISLANDS_RELEASE_DRAFT  set to `false` to publish releases instead of creating drafts
+name: islands_release
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Upstream stable tag to build (for example v1.26.2). Defaults to the latest stable release.
+        required: false
+        type: string
+      force:
+        description: Rebuild even if a release for this tag already exists
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: islands-release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  UPSTREAM_REPOSITORY: zed-industries/zed
+  ISLANDS_BRANCH: ${{ vars.ISLANDS_BRANCH || 'islands-layout' }}
+  # Turns off Zed's auto-updater at compile time. Without this, a stable build
+  # would replace itself with the official Zed from zed.dev.
+  ZED_UPDATE_EXPLANATION: This is an Islands build of Zed. Download new versions from https://github.com/${{ github.repository }}/releases
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  prepare:
+    if: github.repository_owner != 'zed-industries'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      skip: ${{ steps.release.outputs.skip }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      source: ${{ steps.patches.outputs.source }}
+      source_sha: ${{ steps.patches.outputs.source_sha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Pick the upstream release
+        id: release
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          tag="${INPUT_TAG:-}"
+          if [[ -z "$tag" ]]; then
+            tag=$(gh api "repos/$UPSTREAM_REPOSITORY/releases/latest" --jq .tag_name)
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::$tag is not a stable release tag"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+          if gh release view "islands-$tag" > /dev/null 2>&1 && [[ "$FORCE" != "true" ]]; then
+            echo "islands-$tag already exists, nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the fork
+        if: steps.release.outputs.skip == 'false'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply the Islands commits to the release tag
+        id: patches
+        if: steps.release.outputs.skip == 'false'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          upstream_url="https://github.com/$UPSTREAM_REPOSITORY.git"
+          git fetch --no-tags "$upstream_url" \
+            "+refs/tags/$TAG:refs/tags/$TAG" \
+            "+refs/heads/main:refs/remotes/upstream/main"
+
+          report="$RUNNER_TEMP/conflicts.md"
+          : > "$report"
+
+          # Cherry-picks `git rev-list` of the remaining arguments onto the tag.
+          apply_source() {
+            local label=$1
+            local source_ref=$2
+            shift 2
+            local commits
+            commits=$(git rev-list --reverse --no-merges "$@")
+            if [[ -z "$commits" ]]; then
+              echo "No commits found on $label"
+              return 1
+            fi
+            git checkout --quiet --detach "refs/tags/$TAG"
+            local commit
+            for commit in $commits; do
+              if ! git cherry-pick -x "$commit" > /dev/null; then
+                {
+                  echo "### From \`$label\`"
+                  echo
+                  echo "\`$(git log -1 --format='%h %s' "$commit")\` conflicts in:"
+                  echo
+                  git diff --name-only --diff-filter=U | sed 's/^/- /'
+                  echo
+                } >> "$report"
+                git cherry-pick --abort
+                return 1
+              fi
+            done
+            echo "source=$label" >> "$GITHUB_OUTPUT"
+            echo "source_sha=$(git rev-parse "$source_ref")" >> "$GITHUB_OUTPUT"
+          }
+
+          applied=false
+          if git rev-parse --verify --quiet "refs/remotes/origin/islands/$TAG" > /dev/null; then
+            # A hand-resolved branch for exactly this tag wins; it must apply.
+            apply_source "islands/$TAG" "origin/islands/$TAG" \
+              "origin/islands/$TAG" --not "refs/tags/$TAG" && applied=true
+          else
+            apply_source "$ISLANDS_BRANCH" "origin/$ISLANDS_BRANCH" \
+              "origin/$ISLANDS_BRANCH" --not upstream/main origin/main && applied=true
+
+            if [[ "$applied" == false ]]; then
+              # Patch releases share a release branch with earlier ones, so a
+              # resolution made for an earlier tag usually still applies.
+              previous=$(git for-each-ref --format='%(refname:lstrip=4)' 'refs/remotes/origin/islands/v*' | sort -V | tail -n 1)
+              if [[ -n "$previous" ]]; then
+                git fetch --no-tags "$upstream_url" "+refs/tags/$previous:refs/tags/$previous"
+                apply_source "islands/$previous" "origin/islands/$previous" \
+                  "origin/islands/$previous" --not "refs/tags/$previous" && applied=true
+              fi
+            fi
+          fi
+
+          if [[ "$applied" == false ]]; then
+            {
+              echo "The Islands commits don't apply cleanly to [\`$TAG\`](https://github.com/$UPSTREAM_REPOSITORY/releases/tag/$TAG)."
+              echo
+              cat "$report"
+              echo "Resolve them on an \`islands/$TAG\` branch (see the comment at the top of \`.github/workflows/islands_release.yml\`) and re-run the workflow."
+            } > "$RUNNER_TEMP/issue.md"
+            cat "$RUNNER_TEMP/issue.md" >> "$GITHUB_STEP_SUMMARY"
+
+            # One open issue per tag, so scheduled runs don't fail (and email) every few hours.
+            title="Islands build: commits don't apply to $TAG"
+            existing=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty' || true)
+            if [[ -n "$existing" ]]; then
+              echo "::notice::Still waiting on #$existing for a manual resolution."
+              echo "source=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            gh issue create --title "$title" --body-file "$RUNNER_TEMP/issue.md" \
+              || echo "::warning::Could not open an issue (are issues enabled for this repository?)"
+            echo "::error::The Islands commits don't apply to $TAG"
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/islands-patches"
+          git format-patch --binary --output-directory "$RUNNER_TEMP/islands-patches" "refs/tags/$TAG..HEAD"
+          git log --reverse --format='- %s' "refs/tags/$TAG..HEAD" > "$RUNNER_TEMP/islands-patches/commits.md"
+
+      - name: Upload the patches
+        if: steps.release.outputs.skip == 'false' && steps.patches.outputs.source != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: islands-patches
+          path: ${{ runner.temp }}/islands-patches
+          if-no-files-found: error
+
+  bundle_linux_x86_64:
+    needs: prepare
+    if: needs.prepare.outputs.skip == 'false' && needs.prepare.outputs.source != ''
+    # The oldest hosted runner; its glibc decides which distros can run the build.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 340
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPOSITORY }}
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: islands-patches
+          path: islands-patches
+
+      - name: Apply the Islands patches
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git am islands-patches/*.patch
+          rm -rf islands-patches
+
+      # Ubuntu 22.04's clang 14 is too old for webrtc-sys, so match upstream's
+      # bundling toolchain.
+      - name: Install dependencies
+        run: |
+          ./script/linux
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          sudo bash "$RUNNER_TEMP/llvm.sh" 18
+          ./script/download-wasi-sdk
+
+      - name: Bundle
+        env:
+          CC: clang-18
+          CXX: clang++-18
+          LLD: /usr/bin/ld.lld-18
+        run: ./script/bundle-linux --skip-sentry
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: |
+            target/release/zed-linux-x86_64.tar.gz
+            target/zed-remote-server-linux-x86_64.gz
+          if-no-files-found: error
+
+  bundle_mac_aarch64:
+    needs: prepare
+    if: needs.prepare.outputs.skip == 'false' && needs.prepare.outputs.source != ''
+    runs-on: macos-15
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPOSITORY }}
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: islands-patches
+          path: islands-patches
+
+      - name: Apply the Islands patches
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git am islands-patches/*.patch
+          rm -rf islands-patches
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # Without Apple signing secrets the app is only ad-hoc signed, so macOS
+      # Gatekeeper asks users to allow it on first launch.
+      - name: Bundle
+        run: ./script/bundle-mac aarch64-apple-darwin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-aarch64
+          path: |
+            target/aarch64-apple-darwin/release/Zed-aarch64.dmg
+            target/zed-remote-server-macos-aarch64.gz
+          if-no-files-found: error
+
+  bundle_windows_x86_64:
+    needs: prepare
+    if: needs.prepare.outputs.skip == 'false' && needs.prepare.outputs.source != ''
+    runs-on: windows-2022
+    timeout-minutes: 340
+    env:
+      ZED_WORKSPACE: ${{ github.workspace }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Configure git
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.longpaths true
+
+      # bundle-windows.ps1 expects the Community edition of Visual Studio, while
+      # hosted runners ship Enterprise.
+      - name: Expose Visual Studio Enterprise as Community
+        shell: pwsh
+        run: |
+          $root = "C:\Program Files\Microsoft Visual Studio\2022"
+          if (-not (Test-Path "$root\Community")) {
+            New-Item -ItemType Junction -Path "$root\Community" -Target "$root\Enterprise" | Out-Null
+          }
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPOSITORY }}
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: islands-patches
+          path: islands-patches
+
+      - name: Apply the Islands patches
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git am islands-patches/*.patch
+          rm -rf islands-patches
+
+      - name: Bundle
+        shell: pwsh
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: script/bundle-windows.ps1 -Architecture x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: |
+            target/Zed-x86_64.exe
+            target/zed-remote-server-windows-x86_64.zip
+          if-no-files-found: error
+
+  release:
+    needs: [prepare, bundle_linux_x86_64, bundle_mac_aarch64, bundle_windows_x86_64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      SOURCE: ${{ needs.prepare.outputs.source }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+      DRAFT: ${{ vars.ISLANDS_RELEASE_DRAFT != 'false' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish
+        run: |
+          release_tag="islands-$TAG"
+          {
+            echo "Zed [$TAG](https://github.com/$UPSTREAM_REPOSITORY/releases/tag/$TAG) with the Islands UI changes from [\`$SOURCE\`](https://github.com/$GH_REPO/tree/$SOURCE_SHA) applied:"
+            echo
+            cat artifacts/islands-patches/commits.md
+            echo
+            echo "These builds are not signed and don't update themselves."
+            echo
+            echo "- **macOS:** open the .dmg, drag Zed to Applications, then run \`xattr -dr com.apple.quarantine /Applications/Zed.app\` (or allow it under System Settings → Privacy & Security)."
+            echo "- **Windows:** SmartScreen will warn about an unknown publisher; choose More info → Run anyway."
+            echo "- **Linux:** extract the archive into \`~/.local\` as described in https://zed.dev/docs/linux."
+          } > notes.md
+
+          if gh release view "$release_tag" > /dev/null 2>&1; then
+            gh release delete "$release_tag" --yes --cleanup-tag
+          fi
+
+          draft_flag=()
+          if [[ "$DRAFT" == "true" ]]; then
+            draft_flag=(--draft)
+          fi
+          gh release create "$release_tag" "${draft_flag[@]}" \
+            --target "$SOURCE_SHA" \
+            --title "Zed $VERSION (Islands)" \
+            --notes-file notes.md \
+            artifacts/linux-x86_64/release/zed-linux-x86_64.tar.gz \
+            artifacts/linux-x86_64/zed-remote-server-linux-x86_64.gz \
+            artifacts/mac-aarch64/aarch64-apple-darwin/release/Zed-aarch64.dmg \
+            artifacts/mac-aarch64/zed-remote-server-macos-aarch64.gz \
+            artifacts/windows-x86_64/Zed-x86_64.exe \
+            artifacts/windows-x86_64/zed-remote-server-windows-x86_64.zip
