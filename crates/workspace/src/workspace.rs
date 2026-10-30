@@ -9104,6 +9104,8 @@ impl Workspace {
     /// Places the dock panel toggles in vertical stripes on either side of
     /// `content`, as in JetBrains IDEs. Panels docked at the bottom share the
     /// lower end of the left stripe.
+    /// Search lives in the left stripe, under the bottom dock's tool windows,
+    /// instead of the status bar.
     fn render_with_tool_window_stripes(&self, content: impl IntoElement, cx: &App) -> AnyElement {
         if !WorkspaceSettings::get_global(cx)
             .islands
@@ -9117,17 +9119,32 @@ impl Workspace {
                 .id("tool-window-stripe")
                 .flex_none()
                 .h_full()
-                .px_1()
+                .w(TOOL_WINDOW_STRIPE_WIDTH)
                 .py(px(4.))
                 .items_center()
         };
+        let search_button = IconButton::new("tool-window-stripe-search", IconName::MagnifyingGlass)
+            .icon_size(IconSize::Medium)
+            .size(ButtonSize::Large)
+            .tooltip(|_window, cx| {
+                ui::Tooltip::for_action("Project Search", &pane::DeploySearch::default(), cx)
+            })
+            .on_click(|_, window, cx| {
+                window.dispatch_action(pane::DeploySearch::default().boxed_clone(), cx)
+            });
         h_flex()
             .size_full()
             .child(
                 stripe()
                     .justify_between()
                     .child(self.tool_window_stripes.left.clone())
-                    .child(self.tool_window_stripes.bottom.clone()),
+                    .child(
+                        v_flex()
+                            .items_center()
+                            .gap_1()
+                            .child(self.tool_window_stripes.bottom.clone())
+                            .child(search_button),
+                    ),
             )
             .child(div().flex_1().h_full().min_w_0().child(content))
             .child(stripe().child(self.tool_window_stripes.right.clone()))
@@ -9844,6 +9861,9 @@ fn sync_islands_style(cx: &mut App) {
         cx.set_global(style);
     }
 }
+
+/// Width of the tool window stripes along the window edges in the islands layout.
+pub const TOOL_WINDOW_STRIPE_WIDTH: Pixels = px(40.);
 
 /// Draws an island's gap and rounded corners on top of its content.
 ///

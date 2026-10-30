@@ -1,12 +1,12 @@
 use crate::{
-    ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar,
+    ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar, WorkspaceSettings,
     sidebar_side_context_menu,
 };
 use gpui::{
     Anchor, AnyView, App, Context, Decorations, Entity, FocusHandle, Focusable, IntoElement,
     ParentElement, Render, Role, SharedString, Styled, Subscription, WeakEntity, Window,
 };
-use settings::{SettingsContent, update_settings_file};
+use settings::{Settings, SettingsContent, update_settings_file};
 use std::{any::TypeId, sync::Arc};
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
 use ui::{ContextMenu, Divider, IconPosition, Indicator, Tooltip, prelude::*, right_click_menu};
@@ -151,6 +151,7 @@ impl Render for StatusBar {
             .justify_between()
             .gap(DynamicSpacing::Base08.rems(cx))
             .p(DynamicSpacing::Base04.rems(cx))
+            .when_some(Self::islands_inset(cx), |this, inset| this.px(inset))
             .bg(cx.theme().colors().status_bar_background)
             .map(|el| match window.window_decorations() {
                 Decorations::Server => el,
@@ -187,6 +188,15 @@ impl Render for StatusBar {
 }
 
 impl StatusBar {
+    /// With tool window stripes, the status bar items line up with the outer
+    /// edges of the islands instead of the window edges.
+    fn islands_inset(cx: &App) -> Option<Pixels> {
+        let islands = WorkspaceSettings::get_global(cx).islands;
+        islands
+            .show_tool_window_stripes()
+            .then(|| crate::TOOL_WINDOW_STRIPE_WIDTH + px(islands.gap / 2.))
+    }
+
     fn render_left_tools(
         &self,
         sidebar: &SidebarStatus,
