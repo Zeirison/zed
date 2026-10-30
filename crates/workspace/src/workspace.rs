@@ -1595,6 +1595,7 @@ pub struct Workspace {
     last_active_center_pane: Option<WeakEntity<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
     status_bar: Entity<StatusBar>,
+    tool_window_stripes: ToolWindowStripes,
     pub(crate) modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
@@ -1976,6 +1977,11 @@ impl Workspace {
         let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
         let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
         let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
+        let tool_window_stripes = ToolWindowStripes {
+            left: cx.new(|cx| PanelButtons::new_stripe(left_dock.clone(), cx)),
+            bottom: cx.new(|cx| PanelButtons::new_stripe(bottom_dock.clone(), cx)),
+            right: cx.new(|cx| PanelButtons::new_stripe(right_dock.clone(), cx)),
+        };
         let multi_workspace = window
             .root::<MultiWorkspace>()
             .flatten()
@@ -2101,6 +2107,7 @@ impl Workspace {
             last_active_center_pane: Some(center_pane.downgrade()),
             last_active_view_id: None,
             status_bar,
+            tool_window_stripes,
             modal_layer,
             toast_layer,
             titlebar_item: None,
@@ -9094,6 +9101,39 @@ impl Workspace {
     /// focusing it announces "Editor" instead of falling back to the whole
     /// window. We only make it focusable in that case so it never adds a hitbox
     /// or intercepts mouse focus for other users.
+    /// Places the dock panel toggles in vertical stripes on either side of
+    /// `content`, as in JetBrains IDEs. Panels docked at the bottom share the
+    /// lower end of the left stripe.
+    fn render_with_tool_window_stripes(&self, content: impl IntoElement, cx: &App) -> AnyElement {
+        if !WorkspaceSettings::get_global(cx)
+            .islands
+            .show_tool_window_stripes()
+        {
+            return content.into_any_element();
+        }
+
+        let stripe = || {
+            v_flex()
+                .id("tool-window-stripe")
+                .flex_none()
+                .h_full()
+                .px_1()
+                .py(px(4.))
+                .items_center()
+        };
+        h_flex()
+            .size_full()
+            .child(
+                stripe()
+                    .justify_between()
+                    .child(self.tool_window_stripes.left.clone())
+                    .child(self.tool_window_stripes.bottom.clone()),
+            )
+            .child(div().flex_1().h_full().min_w_0().child(content))
+            .child(stripe().child(self.tool_window_stripes.right.clone()))
+            .into_any_element()
+    }
+
     fn render_center(
         &self,
         render_cx: &PaneRenderContext,
@@ -9785,6 +9825,13 @@ impl Focusable for Workspace {
 #[derive(Clone)]
 struct DraggedDock(DockPosition);
 
+/// Panel toggle buttons shown in the tool window stripes.
+struct ToolWindowStripes {
+    left: Entity<PanelButtons>,
+    bottom: Entity<PanelButtons>,
+    right: Entity<PanelButtons>,
+}
+
 /// Mirrors the islands layout settings into [`ui::IslandsStyle`], so that UI
 /// components such as tabs can match the layout.
 fn sync_islands_style(cx: &mut App) {
@@ -10046,8 +10093,9 @@ impl Render for Workspace {
                                     },
                                 ))
                             })
-                            .child({
-                                match bottom_dock_layout {
+                            .child(self.render_with_tool_window_stripes(
+                                {
+                                    match bottom_dock_layout {
                                     BottomDockLayout::Full => div()
                                         .flex()
                                         .flex_col()
@@ -10287,7 +10335,9 @@ impl Render for Workspace {
                                             cx,
                                         )),
                                 }
-                            })
+                                },
+                                cx,
+                            ))
                             .children(self.zoomed.as_ref().and_then(|view| {
                                 let zoomed_view = view.upgrade()?;
                                 let zoomed_element = match zoomed_paddings {

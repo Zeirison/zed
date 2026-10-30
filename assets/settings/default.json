@@ -118,6 +118,9 @@
     "gap": 6,
     // The corner radius of each island, in pixels.
     "corner_radius": 10,
+    // Whether to show panel toggles in vertical stripes along the window
+    // edges instead of in the status bar.
+    "tool_window_stripes": true,
   },
   // Image viewer settings
   "image_viewer": {

@@ -18,6 +18,13 @@ pub struct IslandsLayout {
     pub enabled: bool,
     pub gap: f32,
     pub corner_radius: f32,
+    pub tool_window_stripes: bool,
+}
+
+impl IslandsLayout {
+    pub fn show_tool_window_stripes(&self) -> bool {
+        self.enabled && self.tool_window_stripes
+    }
 }
 
 #[derive(RegisterSetting)]
@@ -134,6 +141,7 @@ impl Settings for WorkspaceSettings {
                     enabled: islands.enabled.unwrap(),
                     gap: islands.gap.unwrap().max(0.),
                     corner_radius: islands.corner_radius.unwrap().max(0.),
+                    tool_window_stripes: islands.tool_window_stripes.unwrap(),
                 }
             },
             confirm_quit: workspace.confirm_quit.unwrap(),

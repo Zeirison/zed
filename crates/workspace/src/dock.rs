@@ -388,6 +388,10 @@ struct PanelEntry {
 
 pub struct PanelButtons {
     dock: Entity<Dock>,
+    /// Stripe buttons are stacked vertically along a window edge and are only
+    /// shown when tool window stripes are enabled; status bar buttons are
+    /// shown otherwise.
+    in_stripe: bool,
     _settings_subscription: Subscription,
 }
 
@@ -1387,10 +1391,19 @@ impl Render for Dock {
 
 impl PanelButtons {
     pub fn new(dock: Entity<Dock>, cx: &mut Context<Self>) -> Self {
+        Self::build(dock, false, cx)
+    }
+
+    pub fn new_stripe(dock: Entity<Dock>, cx: &mut Context<Self>) -> Self {
+        Self::build(dock, true, cx)
+    }
+
+    fn build(dock: Entity<Dock>, in_stripe: bool, cx: &mut Context<Self>) -> Self {
         cx.observe(&dock, |_, _, cx| cx.notify()).detach();
         let settings_subscription = cx.observe_global::<SettingsStore>(|_, cx| cx.notify());
         Self {
             dock,
+            in_stripe,
             _settings_subscription: settings_subscription,
         }
     }
@@ -1398,14 +1411,28 @@ impl PanelButtons {
 
 impl Render for PanelButtons {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let in_stripe = self.in_stripe;
+        let show_stripes = WorkspaceSettings::get_global(cx)
+            .islands
+            .show_tool_window_stripes();
+        if in_stripe != show_stripes {
+            return div().into_any_element();
+        }
+
         let dock = self.dock.read(cx);
         let active_index = dock.active_panel_index;
         let is_open = dock.is_open;
         let dock_position = dock.position;
 
-        let (menu_anchor, menu_attach) = match dock.position {
-            DockPosition::Left => (Anchor::BottomLeft, Anchor::TopLeft),
-            DockPosition::Bottom | DockPosition::Right => (Anchor::BottomRight, Anchor::TopRight),
+        let (menu_anchor, menu_attach) = match (in_stripe, dock.position) {
+            (true, DockPosition::Right) => (Anchor::TopRight, Anchor::TopLeft),
+            (true, DockPosition::Left | DockPosition::Bottom) => {
+                (Anchor::TopLeft, Anchor::TopRight)
+            }
+            (false, DockPosition::Left) => (Anchor::BottomLeft, Anchor::TopLeft),
+            (false, DockPosition::Bottom | DockPosition::Right) => {
+                (Anchor::BottomRight, Anchor::TopRight)
+            }
         };
 
         let dock_entity = self.dock.clone();
@@ -1543,7 +1570,12 @@ impl Render for PanelButtons {
                             // Include active state in element ID to invalidate the cached
                             // tooltip when panel state changes (e.g., via keyboard shortcut)
                             let button = IconButton::new((name, is_active_button as u64), icon)
-                                .icon_size(IconSize::Small)
+                                .icon_size(if in_stripe {
+                                    IconSize::Medium
+                                } else {
+                                    IconSize::Small
+                                })
+                                .when(in_stripe, |this| this.size(ButtonSize::Large))
                                 .toggle_state(is_active_button)
                                 .tab_index(0isize)
                                 .aria_label(icon_tooltip)
@@ -1572,6 +1604,10 @@ impl Render for PanelButtons {
             })
             .collect();
 
+        if in_stripe {
+            return v_flex().gap_1().children(buttons).into_any_element();
+        }
+
         if dock_position == DockPosition::Right {
             buttons.reverse();
         }
@@ -1590,6 +1626,7 @@ impl Render for PanelButtons {
             .when(has_buttons && dock.position == DockPosition::Left, |this| {
                 this.child(Divider::vertical().color(DividerColor::Border))
             })
+            .into_any_element()
     }
 }
 

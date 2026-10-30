@@ -720,6 +720,12 @@ pub struct IslandsSettings {
     ///
     /// Default: 10
     pub corner_radius: Option<f32>,
+    /// Whether to show panel toggles in vertical stripes along the window
+    /// edges, like the tool window stripes of JetBrains IDEs, instead of in
+    /// the status bar. Only applies when islands are enabled.
+    ///
+    /// Default: true
+    pub tool_window_stripes: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
