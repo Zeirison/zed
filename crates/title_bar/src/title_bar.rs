@@ -852,7 +852,7 @@ impl TitleBar {
                 .trigger_with_tooltip(
                     islands_widget_trigger(
                         "project_name_trigger",
-                        Some(project_avatar(&display_name, cx).into_any_element()),
+                        Some(ui::project_avatar(&display_name, cx).into_any_element()),
                         display_name,
                     )
                     .when(!is_project_selected, |this| this.opacity(0.6)),
@@ -1482,44 +1482,6 @@ fn islands_widget_trigger(
 
 /// A rounded square with the project's initials, coloured by a hash of its
 /// name, like the project widget in JetBrains IDEs.
-fn project_avatar(name: &str, cx: &App) -> impl IntoElement {
-    // Accent colours of the Islands title bar gradients.
-    const COLORS: [u32; 9] = [
-        0xB45E43, 0xA56906, 0x6B8E23, 0x2F7FB0, 0x5462C9, 0xA14D78, 0x8A5BAE, 0x2E8B7A, 0x4E9D6C,
-    ];
-    let words: Vec<&str> = name
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .collect();
-    let initials: String = match words.as_slice() {
-        [] => "?".to_string(),
-        [word] => word.chars().take(2).collect(),
-        [first, second, ..] => first
-            .chars()
-            .take(1)
-            .chain(second.chars().take(1))
-            .collect(),
-    };
-    let hash = name.bytes().fold(0u32, |hash, byte| {
-        hash.wrapping_mul(31).wrapping_add(byte as u32)
-    });
-    let color = gpui::rgb(COLORS[hash as usize % COLORS.len()]);
-
-    div()
-        .flex_none()
-        .size(px(18.))
-        .rounded(px(4.))
-        .bg(color)
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_color(gpui::white())
-        .text_size(px(9.))
-        .font_weight(gpui::FontWeight::BOLD)
-        .child(initials.to_uppercase())
-        .when(cx.theme().appearance().is_light(), |this| this.opacity(0.9))
-}
-
 /// The run widget of the JetBrains main toolbar, mapped onto Zed tasks and
 /// the debugger.
 fn render_run_widget() -> impl IntoElement {

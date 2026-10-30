@@ -159,14 +159,33 @@ impl SystemWindowTabs {
         let is_active = window.window_handle().window_id() == item.id;
         let title = item.title.to_string();
 
-        let label = Label::new(&title)
-            .size(LabelSize::Small)
-            .truncate()
-            .color(if is_active {
-                Color::Default
-            } else {
-                Color::Muted
-            });
+        let islands = ui::islands_style(cx).enabled;
+        // Window titles read "project — file"; IDEA's project tabs only name the project.
+        let label_text = if islands {
+            title
+                .split(" — ")
+                .next()
+                .unwrap_or(title.as_str())
+                .to_string()
+        } else {
+            title.clone()
+        };
+        let label = h_flex()
+            .gap_1p5()
+            .min_w_0()
+            .when(islands, |this| {
+                this.child(ui::project_avatar(&label_text, cx).size(px(16.)))
+            })
+            .child(
+                Label::new(label_text.clone())
+                    .size(LabelSize::Small)
+                    .truncate()
+                    .color(if is_active {
+                        Color::Default
+                    } else {
+                        Color::Muted
+                    }),
+            );
 
         let tab = h_flex()
             .id(ix)
@@ -177,8 +196,19 @@ impl SystemWindowTabs {
             .relative()
             .px(DynamicSpacing::Base16.px(cx))
             .justify_center()
-            .border_l_1()
-            .border_color(cx.theme().colors().border)
+            .map(|this| {
+                if islands {
+                    this.rounded(ui::islands_control_radius(cx))
+                        .when(is_active, |this| {
+                            this.bg(cx.theme().colors().ghost_element_active)
+                        })
+                        .when(!is_active, |this| {
+                            this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                        })
+                } else {
+                    this.border_l_1().border_color(cx.theme().colors().border)
+                }
+            })
             .cursor_pointer()
             .on_drag(
                 DraggedWindowTab {
@@ -345,12 +375,18 @@ impl SystemWindowTabs {
         div()
             .flex_1()
             .min_w(rem_size * 10)
-            .when(is_active, |this| this.bg(active_background_color))
-            .border_t_1()
-            .border_color(if is_active {
-                active_background_color
-            } else {
-                cx.theme().colors().border
+            .map(|this| {
+                if islands {
+                    this.px_0p5()
+                } else {
+                    this.when(is_active, |this| this.bg(active_background_color))
+                        .border_t_1()
+                        .border_color(if is_active {
+                            active_background_color
+                        } else {
+                            cx.theme().colors().border
+                        })
+                }
             })
             .child(menu)
     }
@@ -386,8 +422,15 @@ impl SystemWindowTabs {
 impl Render for SystemWindowTabs {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
+        let islands = ui::islands_style(cx).enabled;
         let active_background_color = cx.theme().colors().title_bar_background;
-        let inactive_background_color = cx.theme().colors().tab_bar_background;
+        // In the islands layout the tabs sit on the window chrome, between the
+        // title bar and the islands.
+        let inactive_background_color = if islands {
+            cx.theme().colors().title_bar_background
+        } else {
+            cx.theme().colors().tab_bar_background
+        };
         let entity = cx.entity();
 
         let controller = cx.global::<SystemWindowTabController>();
@@ -474,9 +517,11 @@ impl Render for SystemWindowTabs {
                 h_flex()
                     .h_full()
                     .px(DynamicSpacing::Base06.rems(cx))
-                    .border_t_1()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border)
+                    .when(!islands, |this| {
+                        this.border_t_1()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border)
+                    })
                     .child(
                         IconButton::new("plus", IconName::Plus)
                             .icon_size(IconSize::Small)
