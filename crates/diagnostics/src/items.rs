@@ -118,9 +118,24 @@ impl Render for DiagnosticIndicator {
                     .tab_index(0isize)
                     .aria_label(diagnostics_label)
                     .tooltip(move |_window, cx| {
-                        Tooltip::for_action("Project Diagnostics", &Deploy, cx)
+                        if ui::islands_style(cx).enabled {
+                            Tooltip::for_action("Problems", &crate::problems_panel::ToggleFocus, cx)
+                        } else {
+                            Tooltip::for_action("Project Diagnostics", &Deploy, cx)
+                        }
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
+                        if ui::islands_style(cx).enabled {
+                            if let Some(workspace) = this.workspace.upgrade() {
+                                workspace.update(cx, |workspace, cx| {
+                                    workspace
+                                        .toggle_panel_focus::<crate::problems_panel::ProblemsPanel>(
+                                            window, cx,
+                                        );
+                                });
+                            }
+                            return;
+                        }
                         if let Some(workspace) = this.workspace.upgrade() {
                             if this.summary.error_count == 0 && this.summary.warning_count > 0 {
                                 cx.update_default_global(

@@ -1,4 +1,5 @@
 pub mod items;
+pub mod problems_panel;
 mod toolbar_controls;
 
 mod buffer_diagnostics;
@@ -68,6 +69,7 @@ impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut App) {
     editor::set_diagnostic_renderer(diagnostic_renderer::DiagnosticRenderer {}, cx);
+    problems_panel::init(cx);
     cx.observe_new(ProjectDiagnosticsEditor::register).detach();
     cx.observe_new(BufferDiagnosticsEditor::register).detach();
 }

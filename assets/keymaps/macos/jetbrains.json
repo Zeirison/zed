@@ -137,7 +137,7 @@
       "cmd-o": "project_symbols::Toggle", // JetBrains: Go to Class
       "cmd-1": "project_panel::ToggleFocus",
       "cmd-5": "debug_panel::ToggleFocus",
-      "cmd-6": "diagnostics::Deploy",
+      "cmd-6": "problems_panel::ToggleFocus",
       "cmd-7": "outline_panel::ToggleFocus",
     },
   },
@@ -149,7 +149,7 @@
       "cmd-3": null, // Find Panel (bottom dock)
       "cmd-4": "run_panel::ToggleFocus",
       "cmd-5": "debug_panel::ToggleFocus",
-      "cmd-6": "diagnostics::Deploy",
+      "cmd-6": "problems_panel::ToggleFocus",
       "cmd-7": "outline_panel::ToggleFocus",
       "cmd-8": null, // Services (bottom dock)
       "cmd-9": null, // Git History (bottom dock)

@@ -46,6 +46,12 @@
     },
   },
   {
+    "context": "ProblemsPanel",
+    "bindings": {
+      "enter": "menu::Confirm",
+    },
+  },
+  {
     "context": "menu",
     "bindings": {
       "right": "menu::SelectChild",
