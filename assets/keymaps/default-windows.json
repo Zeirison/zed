@@ -46,6 +46,12 @@
     },
   },
   {
+    "context": "FindPanel",
+    "bindings": {
+      "enter": "menu::Confirm",
+    },
+  },
+  {
     "context": "Picker || menu",
     "use_key_equivalents": true,
     "bindings": {

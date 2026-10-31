@@ -1,5 +1,19 @@
 use super::*;
 
+/// Shows "find all references" results somewhere other than a multibuffer tab,
+/// like the islands layout's Find tool window. Returns whether it handled them.
+pub type ReferencesPresenterFn = dyn Fn(
+    &mut Workspace,
+    SharedString,
+    std::collections::HashMap<Entity<Buffer>, Vec<Range<Point>>>,
+    &mut Window,
+    &mut Context<Workspace>,
+) -> bool;
+
+pub struct ReferencesPresenter(pub Arc<ReferencesPresenterFn>);
+
+impl gpui::Global for ReferencesPresenter {}
+
 impl Editor {
     pub fn move_left(&mut self, _: &MoveLeft, window: &mut Window, cx: &mut Context<Self>) {
         self.change_selections(Default::default(), window, cx, |s| {
@@ -1523,6 +1537,19 @@ impl Editor {
                 } else {
                     format!("References to {target}")
                 };
+                if let Some(presenter) = cx
+                    .try_global::<ReferencesPresenter>()
+                    .map(|presenter| presenter.0.clone())
+                {
+                    let symbol: SharedString = if target.is_empty() {
+                        "symbol".into()
+                    } else {
+                        target.clone().into()
+                    };
+                    if presenter(workspace, symbol, locations.clone(), window, cx) {
+                        return Navigated::Yes;
+                    }
+                }
                 let allow_preview = PreviewTabsSettings::get_global(cx)
                     .enable_preview_multibuffer_from_code_navigation;
                 Self::open_locations_in_multibuffer(

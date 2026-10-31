@@ -561,6 +561,43 @@ enum Entry {
         name: String,
         url: SharedString,
     },
+    /// One of the Git actions IntelliJ lists at the top of its branch popup.
+    IslandsAction(IslandsBranchAction),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum IslandsBranchAction {
+    UpdateProject,
+    Commit,
+    Push,
+}
+
+impl IslandsBranchAction {
+    const ALL: [Self; 3] = [Self::UpdateProject, Self::Commit, Self::Push];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::UpdateProject => "Update Project…",
+            Self::Commit => "Commit…",
+            Self::Push => "Push…",
+        }
+    }
+
+    fn icon(self) -> IconName {
+        match self {
+            Self::UpdateProject => IconName::ArrowDown,
+            Self::Commit => IconName::Check,
+            Self::Push => IconName::ArrowUp,
+        }
+    }
+
+    fn icon_color(self) -> Color {
+        match self {
+            Self::UpdateProject => Color::Accent,
+            Self::Commit => Color::Muted,
+            Self::Push => Color::Success,
+        }
+    }
 }
 
 impl Entry {
@@ -577,6 +614,7 @@ impl Entry {
             Entry::NewUrl { url, .. } => url.as_str(),
             Entry::NewBranch { name, .. } => name.as_str(),
             Entry::NewRemoteName { name, .. } => name.as_str(),
+            Entry::IslandsAction(action) => action.label(),
         }
     }
 
@@ -1480,7 +1518,7 @@ impl PickerDelegate for BranchListDelegate {
                 matches
             };
             picker
-                .update(cx, |picker, _| {
+                .update(cx, |picker, cx| {
                     if let PickerState::CreateRemote(url) = &picker.delegate.state {
                         let query = normalize_branch_name(&query);
                         if !query.is_empty() {
@@ -1522,6 +1560,13 @@ impl PickerDelegate for BranchListDelegate {
                         matches.push(entry);
                     } else {
                         picker.delegate.state = PickerState::List;
+                    }
+                    if query.is_empty()
+                        && ui::islands_style(cx).enabled
+                        && !picker.delegate.is_select_only()
+                        && picker.delegate.repo.is_some()
+                    {
+                        matches.splice(0..0, IslandsBranchAction::ALL.map(Entry::IslandsAction));
                     }
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
@@ -1621,6 +1666,26 @@ impl PickerDelegate for BranchListDelegate {
                 };
                 self.create_branch(from_branch, name.into(), window, cx);
             }
+            Entry::IslandsAction(action) => {
+                let action = *action;
+                let workspace = self.workspace.clone();
+                // Run after the popup closes, so focus is back in the workspace.
+                window.defer(cx, move |window, cx| match action {
+                    IslandsBranchAction::UpdateProject => {
+                        window.dispatch_action(git::Pull.boxed_clone(), cx)
+                    }
+                    IslandsBranchAction::Push => {
+                        window.dispatch_action(git::Push.boxed_clone(), cx)
+                    }
+                    IslandsBranchAction::Commit => {
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.focus_panel::<crate::git_panel::GitPanel>(window, cx);
+                            })
+                            .log_err();
+                    }
+                });
+            }
         }
 
         cx.emit(DismissEvent);
@@ -1639,6 +1704,49 @@ impl PickerDelegate for BranchListDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry = &self.matches.get(ix)?;
+
+        if let Entry::IslandsAction(action) = entry {
+            let is_last_action = !matches!(self.matches.get(ix + 1), Some(Entry::IslandsAction(_)));
+            return Some(
+                v_flex()
+                    .w_full()
+                    .child(
+                        ListItem::new(format!("vcs-menu-{ix}"))
+                            .inset(true)
+                            .spacing(ListItemSpacing::Sparse)
+                            .toggle_state(selected)
+                            .child(
+                                h_flex()
+                                    .gap_2p5()
+                                    .child(
+                                        Icon::new(action.icon())
+                                            .color(action.icon_color())
+                                            .size(IconSize::Small),
+                                    )
+                                    .child(Label::new(action.label())),
+                            ),
+                    )
+                    .when(is_last_action && ix + 1 < self.matches.len(), |this| {
+                        this.child(div().px_2().py_1().child(Divider::horizontal()))
+                    })
+                    .into_any_element(),
+            );
+        }
+
+        let islands = ui::islands_style(cx).enabled;
+        let upstream_label = entry.as_branch().filter(|_| islands).and_then(|branch| {
+            let upstream = branch.upstream.as_ref()?;
+            let mut label = upstream.stripped_ref_name()?.to_string();
+            if let Some(status) = branch.tracking_status() {
+                if status.ahead > 0 {
+                    label = format!("↑{} {label}", status.ahead);
+                }
+                if status.behind > 0 {
+                    label = format!("↓{} {label}", status.behind);
+                }
+            }
+            Some(label)
+        });
 
         let (commit_time, absolute_time, author_name, subject) = entry
             .as_branch()
@@ -1687,6 +1795,7 @@ impl PickerDelegate for BranchListDelegate {
             Entry::NewUrl { .. } | Entry::NewBranch { .. } | Entry::NewRemoteName { .. } => {
                 IconName::Plus
             }
+            Entry::IslandsAction(action) => action.icon(),
             Entry::Branch { branch, .. } => {
                 if is_checked_branch {
                     IconName::Check
@@ -1721,6 +1830,7 @@ impl PickerDelegate for BranchListDelegate {
                     .truncate()
                     .into_any_element()
             }
+            Entry::IslandsAction(action) => Label::new(action.label()).into_any_element(),
         };
 
         let focus_handle = self.focus_handle.clone();
@@ -1816,7 +1926,22 @@ impl PickerDelegate for BranchListDelegate {
                             .id("info_container")
                             .w_full()
                             .min_w_0()
-                            .child(entry_title)
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .gap_2()
+                                    .child(entry_title)
+                                    .when_some(upstream_label, |this, upstream_label| {
+                                        this.child(
+                                            div().ml_auto().flex_none().child(
+                                                Label::new(upstream_label)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            ),
+                                        )
+                                    }),
+                            )
                             .child({
                                 let message = match entry {
                                     Entry::NewUrl { url } => format!("Based off {url}"),
@@ -1834,10 +1959,12 @@ impl PickerDelegate for BranchListDelegate {
                                             "Based off the current branch".to_string()
                                         }
                                     }
-                                    Entry::Branch { .. } => String::new(),
+                                    Entry::Branch { .. } | Entry::IslandsAction(_) => String::new(),
                                 };
 
-                                if matches!(entry, Entry::Branch { .. }) {
+                                if islands && matches!(entry, Entry::Branch { .. }) {
+                                    div().into_any_element()
+                                } else if matches!(entry, Entry::Branch { .. }) {
                                     let show_author_name = ProjectSettings::get_global(cx)
                                         .git
                                         .branch_picker
@@ -1936,8 +2063,10 @@ impl PickerDelegate for BranchListDelegate {
                             ),
                     ),
             )
+            // Islands rows keep the tracking branch right-aligned like IntelliJ, so the
+            // hover-only delete button (which reserves space) is left to the keybinding.
             .when(
-                !self.is_select_only() && !is_new_items && !is_head_branch,
+                !self.is_select_only() && !is_new_items && !is_head_branch && !islands,
                 |this| {
                     let is_remote = entry.as_branch().is_some_and(|branch| branch.is_remote());
                     this.end_slot(deleted_branch_icon(ix, is_remote))
@@ -1966,12 +2095,11 @@ impl PickerDelegate for BranchListDelegate {
                         .is_none_or(|previous_branch| {
                             previous_branch.is_remote() != branch.is_remote()
                         });
-                starts_section.then(|| {
-                    if branch.is_remote() {
-                        ("Remote Branches", ix != 0)
-                    } else {
-                        ("Local Branches", false)
-                    }
+                starts_section.then(|| match (branch.is_remote(), islands) {
+                    (true, true) => ("Remote", ix != 0),
+                    (true, false) => ("Remote Branches", ix != 0),
+                    (false, true) => ("Local", false),
+                    (false, false) => ("Local Branches", false),
                 })
             });
 

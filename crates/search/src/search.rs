@@ -18,6 +18,7 @@ pub use search_status_button::SEARCH_ICON;
 use crate::project_search::ProjectSearchBar;
 
 pub mod buffer_search;
+pub mod find_panel;
 pub mod project_search;
 pub(crate) mod search_bar;
 pub mod search_status_button;
@@ -28,6 +29,7 @@ pub fn init(cx: &mut App) {
     buffer_search::init(cx);
     project_search::init(cx);
     text_finder::init(cx);
+    find_panel::init(cx);
 }
 
 actions!(
