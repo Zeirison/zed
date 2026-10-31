@@ -2,7 +2,9 @@ use std::borrow::Borrow;
 use std::rc::Rc;
 
 use crate::prelude::*;
-use crate::{Color, KeyBinding, Label, LabelSize, StyledExt, h_flex, v_flex};
+use crate::{
+    Color, KeyBinding, KeyBindingStyle, Label, LabelSize, StyledExt, h_flex, islands_style, v_flex,
+};
 use gpui::{Action, AnyElement, AnyView, AppContext, FocusHandle, IntoElement, Render};
 
 #[derive(RegisterComponent)]
@@ -193,12 +195,21 @@ impl Tooltip {
 
 impl Render for Tooltip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(cx, |el, _| {
+        let islands = islands_style(cx).enabled;
+        tooltip_container(cx, move |el, _| {
             el.child(
                 h_flex()
-                    .gap_4()
+                    .map(|this| if islands { this.gap_2() } else { this.gap_4() })
                     .child(div().max_w_72().child(self.title.clone()))
                     .when_some(self.key_binding.clone(), |this, key_binding| {
+                        // IntelliJ shows the shortcut as plain gray text next to the title.
+                        let key_binding = if islands {
+                            key_binding
+                                .style(KeyBindingStyle::Label)
+                                .color(Color::Muted)
+                        } else {
+                            key_binding
+                        };
                         this.justify_between().child(key_binding)
                     }),
             )
@@ -219,16 +230,21 @@ where
 {
     let app = (*cx).borrow();
     let ui_font = theme::theme_settings(app).ui_font(app).clone();
+    let islands = islands_style(app).enabled;
 
     // padding to avoid tooltip appearing right below the mouse cursor
     div().pl_2().pt_2p5().child(
         v_flex()
             .elevation_2(app)
             .font(ui_font)
-            .text_ui(app)
             .text_color(app.theme().colors().text)
-            .py_1()
-            .px_2()
+            .map(|el| {
+                if islands {
+                    el.text_ui_sm(app).py_1p5().px_2p5()
+                } else {
+                    el.text_ui(app).py_1().px_2()
+                }
+            })
             .map(|el| f(el, cx)),
     )
 }

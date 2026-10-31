@@ -1541,6 +1541,15 @@ impl Render for PanelButtons {
 
                     (action, icon_tooltip.into())
                 };
+                // IntelliJ names the tool window and its shortcut, whether it is open or not.
+                let (tooltip, tooltip_action) = if in_stripe {
+                    (
+                        SharedString::from(icon_tooltip.trim_end_matches(" Panel").to_string()),
+                        entry.panel.toggle_action(window, cx),
+                    )
+                } else {
+                    (tooltip, action.boxed_clone())
+                };
 
                 let focus_handle = dock.panel_button_focus_handle(window, cx);
                 let icon_label = entry.panel.icon_label(window, cx);
@@ -1662,7 +1671,7 @@ impl Render for PanelButtons {
                                 })
                                 .when(!is_active, |this| {
                                     this.tooltip(move |_window, cx| {
-                                        Tooltip::for_action(tooltip.clone(), &*action, cx)
+                                        Tooltip::for_action(tooltip.clone(), &*tooltip_action, cx)
                                     })
                                 });
 
