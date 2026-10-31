@@ -7,8 +7,8 @@ use crate::{
 use agent_settings::AgentSettings;
 use git::Clone as GitClone;
 use gpui::{
-    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    ParentElement, Render, Styled, Task, TaskExt, Window, actions,
+    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    InteractiveElement, ParentElement, Render, Styled, Task, TaskExt, Window, actions,
 };
 use gpui::{WeakEntity, linear_color_stop, linear_gradient};
 use menu::{SelectNext, SelectPrevious};
@@ -17,7 +17,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{DefaultOpenBehavior, Settings};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
-use util::ResultExt;
+use util::{ResultExt, paths::PathExt as _};
 use zed_actions::{
     Extensions, OpenKeymap, OpenOnboarding, OpenSettings, assistant::ToggleFocus, command_palette,
 };
@@ -258,7 +258,8 @@ impl WelcomePage {
         cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
             .detach();
 
-        if fallback_to_recent_projects {
+        // The islands welcome screen always lists recent projects, like IntelliJ's.
+        if fallback_to_recent_projects || ui::islands_style(cx).enabled {
             let fs = workspace
                 .upgrade()
                 .map(|ws| ws.read(cx).app_state().fs.clone());
@@ -412,10 +413,273 @@ impl WelcomePage {
             self.focus_handle.clone(),
         )
     }
+
+    fn render_islands(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors();
+        let radius = ui::islands_control_radius(cx);
+        let hover_background = colors.ghost_element_hover;
+        let version = release_channel::AppVersion::global(cx);
+        let version_label = format!("{}.{}.{}", version.major, version.minor, version.patch);
+
+        let nav_item = |id: &'static str,
+                        label: &'static str,
+                        icon: IconName,
+                        action: Option<Box<dyn Action>>,
+                        selected: bool| {
+            let selected_background = colors.ghost_element_selected;
+            h_flex()
+                .id(id)
+                .w_full()
+                .h(px(30.))
+                .px_2()
+                .gap_2()
+                .rounded(radius)
+                .cursor_pointer()
+                .map(|this| {
+                    if selected {
+                        this.bg(selected_background)
+                    } else {
+                        this.hover(move |style| style.bg(hover_background))
+                    }
+                })
+                .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                .child(Label::new(label))
+                .when_some(action, |this, action| {
+                    this.on_click(move |_, window, cx| {
+                        window.dispatch_action(action.boxed_clone(), cx)
+                    })
+                })
+        };
+
+        let sidebar = v_flex()
+            .flex_none()
+            .w(px(232.))
+            .h_full()
+            .p_3()
+            .gap_0p5()
+            .border_r_1()
+            .border_color(colors.border_variant)
+            .child(
+                h_flex()
+                    .gap_3()
+                    .px_1()
+                    .pt_2()
+                    .pb_5()
+                    .child(Vector::square(VectorName::ZedLogo, rems_from_px(32_f32)))
+                    .child(
+                        v_flex()
+                            .child(Label::new("Zed").weight(FontWeight::SEMIBOLD))
+                            .child(
+                                Label::new(version_label)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    ),
+            )
+            .child(nav_item(
+                "welcome-nav-projects",
+                "Projects",
+                IconName::IslandsProject,
+                None,
+                true,
+            ))
+            .child(nav_item(
+                "welcome-nav-customize",
+                "Customize",
+                IconName::Settings,
+                Some(OpenSettings.boxed_clone()),
+                false,
+            ))
+            .child(nav_item(
+                "welcome-nav-keymap",
+                "Keymap",
+                IconName::Keyboard,
+                Some(OpenKeymap.boxed_clone()),
+                false,
+            ))
+            .child(nav_item(
+                "welcome-nav-plugins",
+                "Plugins",
+                IconName::Blocks,
+                Some(
+                    Extensions {
+                        category_filter: None,
+                        id: None,
+                    }
+                    .boxed_clone(),
+                ),
+                false,
+            ))
+            .child(nav_item(
+                "welcome-nav-learn",
+                "Learn",
+                IconName::Book,
+                Some(OpenOnboarding.boxed_clone()),
+                false,
+            ));
+
+        let focus_handle = self.focus_handle.clone();
+        let action_button = |id: &'static str,
+                             label: &'static str,
+                             icon: IconName,
+                             action: Box<dyn Action>,
+                             tab_index: isize| {
+            let focus_handle = focus_handle.clone();
+            Button::new(id, label)
+                .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
+                .start_icon(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                .tab_index(tab_index)
+                .on_click(move |_, window, cx| {
+                    focus_handle.dispatch_action(action.as_ref(), window, cx)
+                })
+        };
+        let actions_row = h_flex()
+            .gap_2()
+            .child(action_button(
+                "welcome-new-file",
+                "New File",
+                IconName::IslandsAdd,
+                NewFile.boxed_clone(),
+                0,
+            ))
+            .child(action_button(
+                "welcome-open",
+                "Open",
+                IconName::FolderOpen,
+                Open::DEFAULT.boxed_clone(),
+                1,
+            ))
+            .child(action_button(
+                "welcome-clone",
+                "Clone Repository",
+                IconName::CloudDownload,
+                GitClone.boxed_clone(),
+                2,
+            ));
+
+        let recent_workspaces = self.recent_workspaces.clone().unwrap_or_default();
+        let content = if recent_workspaces.is_empty() {
+            v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .child(Vector::square(VectorName::ZedLogo, rems_from_px(56_f32)))
+                .child(
+                    div()
+                        .mt_3()
+                        .child(Headline::new("Welcome to Zed").size(HeadlineSize::Large)),
+                )
+                .child(
+                    Label::new("Create a new file, open a folder, or clone a repository.")
+                        .color(Color::Muted),
+                )
+                .child(actions_row.mt_6())
+                .into_any_element()
+        } else {
+            let rows = recent_workspaces
+                .iter()
+                .take(20)
+                .enumerate()
+                .map(|(index, workspace)| {
+                    let name = project_name(&workspace.identity_paths);
+                    let location = workspace
+                        .identity_paths
+                        .paths()
+                        .iter()
+                        .map(|path| path.compact().to_string_lossy().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let is_remote =
+                        matches!(workspace.location, SerializedWorkspaceLocation::Remote(_));
+                    let focus_handle = self.focus_handle.clone();
+                    h_flex()
+                        .id(("welcome-recent-project", index))
+                        .w_full()
+                        .px_2()
+                        .py_1p5()
+                        .gap_3()
+                        .rounded(radius)
+                        .cursor_pointer()
+                        .hover(move |style| style.bg(hover_background))
+                        .child(
+                            ui::project_avatar(&name, cx)
+                                .size(px(28.))
+                                .rounded(px(6.))
+                                .text_size(px(12.)),
+                        )
+                        .child(
+                            v_flex()
+                                .min_w_0()
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .child(
+                                            Label::new(name).weight(FontWeight::MEDIUM).truncate(),
+                                        )
+                                        .when(is_remote, |this| {
+                                            this.child(
+                                                Icon::new(IconName::Server)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Muted),
+                                            )
+                                        }),
+                                )
+                                .child(
+                                    Label::new(location)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .truncate(),
+                                ),
+                        )
+                        .on_click(move |_, window, cx| {
+                            focus_handle.dispatch_action(&OpenRecentProject { index }, window, cx)
+                        })
+                })
+                .collect::<Vec<_>>();
+            v_flex()
+                .size_full()
+                .px_6()
+                .pt_6()
+                .gap_4()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .child(Headline::new("Projects").size(HeadlineSize::Small))
+                        .child(actions_row),
+                )
+                .child(
+                    v_flex()
+                        .id("welcome-recent-projects")
+                        .flex_1()
+                        .overflow_y_scroll()
+                        .gap_0p5()
+                        .children(rows),
+                )
+                .into_any_element()
+        };
+
+        h_flex()
+            .key_context("Welcome")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::open_recent_project))
+            .size_full()
+            .bg(colors.editor_background)
+            .child(sidebar)
+            .child(content)
+            .into_any_element()
+    }
 }
 
 impl Render for WelcomePage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if ui::islands_style(cx).enabled {
+            return self.render_islands(cx);
+        }
         let (first_section, second_section) = CONTENT;
         let first_section_entries = first_section.entries.len();
         let mut next_tab_index = first_section_entries + second_section.entries.len();
@@ -511,6 +775,7 @@ impl Render for WelcomePage {
                         )
                     }),
             )
+            .into_any_element()
     }
 }
 
