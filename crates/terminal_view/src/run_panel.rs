@@ -81,7 +81,7 @@ impl RunPanel {
                     return (None, None);
                 };
                 let title = div()
-                    .pl_1()
+                    .pl(px(6.))
                     .pr_2()
                     .child(render_panel_header_title(&run_panel, window, cx))
                     .into_any_element();

@@ -93,7 +93,8 @@ impl ParentElement for TabBar {
 impl RenderOnce for TabBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         // In the islands layout tabs float as pills, so the bar has no rules.
-        let border_color = if islands_style(cx).enabled {
+        let islands = islands_style(cx).enabled;
+        let border_color = if islands {
             gpui::transparent_black()
         } else {
             cx.theme().colors().border
@@ -137,6 +138,9 @@ impl RenderOnce for TabBar {
                         h_flex()
                             .id("tabs")
                             .flex_grow_1()
+                            // Pills keep 2px of their own on each side; together with this the
+                            // first pill sits as far from the island edge as from its top.
+                            .when(islands, |this| this.px(px(2.)))
                             .overflow_x_scroll()
                             .when_some(self.scroll_handle, |cx, scroll_handle| {
                                 cx.track_scroll(&scroll_handle)
@@ -150,6 +154,7 @@ impl RenderOnce for TabBar {
                         .flex_none()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .px(DynamicSpacing::Base06.rems(cx))
+                        .when(islands, |this| this.pr(px(4.)))
                         .border_color(border_color)
                         .border_b_1()
                         .border_l_1()

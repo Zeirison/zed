@@ -140,7 +140,7 @@ impl TerminalPanel {
                 });
                 let header_title = header_panel.as_ref().map(|terminal_panel| {
                     div()
-                        .pl_1()
+                        .pl(px(6.))
                         .pr_2()
                         .child(render_panel_header_title(terminal_panel, window, cx))
                         .into_any_element()

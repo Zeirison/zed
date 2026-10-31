@@ -1265,7 +1265,8 @@ impl Dock {
             .h(panel_header_height(cx))
             .w_full()
             .pl_3()
-            .pr_1p5()
+            // Same gap to the right edge as the buttons leave above them.
+            .pr_1()
             .gap_0p5()
             .child(render_panel_header_title(panel.as_ref(), window, cx))
             .child(div().flex_1())
@@ -1728,7 +1729,8 @@ pub fn panel_header_height(cx: &App) -> Pixels {
     if WorkspaceSettings::get_global(cx).islands.compact {
         px(28.)
     } else {
-        px(34.)
+        // Match the editor tab bar so headers line up across neighbouring islands.
+        ui::Tab::container_height(cx)
     }
 }
 

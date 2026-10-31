@@ -7756,7 +7756,7 @@ impl GitPanel {
             .h(workspace::dock::panel_header_height(cx))
             .w_full()
             .pl_3()
-            .pr_1p5()
+            .pr_1()
             .gap_0p5()
             .child(
                 Label::new("Commit")
