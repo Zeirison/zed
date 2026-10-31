@@ -281,3 +281,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## [Islands UI](https://github.com/Zeirison/zed-islands-ui)
+
+Colors from the Islands UI themes and editor color schemes of the IntelliJ
+Platform (https://github.com/JetBrains/intellij-community), licensed under the
+Apache License, Version 2.0. See islands-ui/LICENSE and islands-ui/NOTICE.

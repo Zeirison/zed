@@ -1,0 +1,22 @@
+Islands UI theme for Zed
+Copyright 2026 Dmytro
+
+The colors in this theme are taken from the Islands theme and editor color
+schemes in IntelliJ Platform (https://github.com/JetBrains/intellij-community),
+Copyright JetBrains s.r.o., licensed under the Apache License, Version 2.0:
+
+  platform/platform-resources/src/themes/islands/ManyIslandsDark.theme.json
+  platform/platform-resources/src/themes/islands/ManyIslandsLight.theme.json
+  platform/platform-resources/src/themes/islands/IslandSchemeDark.xml
+  platform/platform-resources/src/themes/expUI/expUI_lightScheme.xml
+
+The file and folder icons in icons/ are copied unmodified from the IntelliJ
+Platform new UI icon set, Copyright JetBrains s.r.o., licensed under the
+Apache License, Version 2.0:
+
+  platform/icons/src/expui/
+  plugins/kotlin/base/resources/resources/org/jetbrains/kotlin/idea/icons/expui/
+  python/python-parser/resources/icons/com/jetbrains/python/parser/expui/
+
+This project is not affiliated with or endorsed by JetBrains. IntelliJ and
+JetBrains are trademarks of JetBrains s.r.o.

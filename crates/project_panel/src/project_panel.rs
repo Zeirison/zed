@@ -93,6 +93,8 @@ use crate::{
 
 /// Horizontal inset of entry rows when the islands layout is enabled.
 const ISLANDS_ROW_INSET: Pixels = px(6.);
+// IDEA's tree rows are 24px tall; the row's 1px top and bottom borders make up the rest.
+const ISLANDS_ROW_CONTENT_HEIGHT: Pixels = px(22.);
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
@@ -6641,6 +6643,9 @@ impl ProjectPanel {
                     .spacing(match settings.entry_spacing {
                         ProjectPanelEntrySpacing::Comfortable => ListItemSpacing::Dense,
                         ProjectPanelEntrySpacing::Standard => ListItemSpacing::ExtraDense,
+                    })
+                    .when(ui::islands_style(cx).enabled, |this| {
+                        this.height(ISLANDS_ROW_CONTENT_HEIGHT)
                     })
                     .selectable(false)
                     .when(
