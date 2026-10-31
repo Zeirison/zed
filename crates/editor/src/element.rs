@@ -1778,6 +1778,12 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let strip_reserved =
+            if Self::islands_diff_strip_offset(gutter_dimensions, cx) > Pixels::ZERO {
+                Self::ISLANDS_DIFF_STRIP_GAP + Self::ISLANDS_DIFF_STRIP_WIDTH
+            } else {
+                Pixels::ZERO
+            };
         for (ix, crease_toggle) in crease_toggles.iter_mut().enumerate() {
             if let Some(crease_toggle) = crease_toggle {
                 debug_assert!(gutter_settings.folds);
@@ -1789,11 +1795,14 @@ impl EditorElement {
 
                 let display_row = DisplayRow(start_row.0 + ix as u32);
                 let position = point(
-                    gutter_dimensions.width - gutter_dimensions.right_padding,
+                    gutter_dimensions.width - gutter_dimensions.right_padding + strip_reserved,
                     line_height * (display_row.as_f64() - scroll_position.y) as f32,
                 );
                 let centering_offset = point(
-                    (gutter_dimensions.fold_area_width() - crease_toggle_size.width) / 2.,
+                    (gutter_dimensions.fold_area_width()
+                        - strip_reserved
+                        - crease_toggle_size.width)
+                        / 2.,
                     (line_height - crease_toggle_size.height) / 2.,
                 );
                 let origin = gutter_hitbox.origin + position + centering_offset;
@@ -1867,6 +1876,7 @@ impl EditorElement {
         &self,
         line_height: Pixels,
         gutter_hitbox: &Hitbox,
+        diff_strip_offset: Pixels,
         display_rows: Range<DisplayRow>,
         snapshot: &EditorSnapshot,
         scroll_position: gpui::Point<ScrollOffset>,
@@ -1886,6 +1896,7 @@ impl EditorElement {
                         scroll_position,
                         line_height,
                         gutter_hitbox.bounds,
+                        diff_strip_offset,
                         hunk,
                         snapshot,
                         cx,
@@ -5406,6 +5417,12 @@ impl EditorElement {
         }
 
         let line_height = layout.position_map.line_height;
+        let islands_strip = layout.diff_strip_offset > Pixels::ZERO;
+        let strip_corner_radii = if islands_strip {
+            Corners::all(px(1.))
+        } else {
+            Corners::all(px(0.))
+        };
         window.paint_layer(layout.gutter_hitbox.bounds, |window| {
             for (hunk, hitbox) in &layout.display_hunks {
                 let hunk_to_paint = match hunk {
@@ -5414,6 +5431,7 @@ impl EditorElement {
                             layout.position_map.scroll_position,
                             line_height,
                             layout.gutter_hitbox.bounds,
+                            layout.diff_strip_offset,
                             hunk,
                             &layout.position_map.snapshot,
                             cx,
@@ -5421,8 +5439,9 @@ impl EditorElement {
                         Some((
                             hunk_bounds,
                             cx.theme().colors().version_control_modified,
-                            Corners::all(px(0.)),
+                            strip_corner_radii,
                             DiffHunkStatus::modified_none(),
+                            false,
                         ))
                     }
                     DisplayDiffHunk::Unfolded {
@@ -5446,6 +5465,13 @@ impl EditorElement {
                             },
                         };
                         match status.kind {
+                            // The islands strip sits beside the line numbers, so only the
+                            // right half of the deleted marker is drawn, pointing at the text.
+                            DiffHunkStatusKind::Deleted
+                                if display_row_range.is_empty() && islands_strip =>
+                            {
+                                (hunk_hitbox.bounds, color, strip_corner_radii, *status, true)
+                            }
                             DiffHunkStatusKind::Deleted if display_row_range.is_empty() => (
                                 Bounds::new(
                                     point(
@@ -5457,13 +5483,22 @@ impl EditorElement {
                                 color,
                                 Corners::all(1. * line_height),
                                 *status,
+                                false,
                             ),
-                            _ => (hunk_hitbox.bounds, color, Corners::all(px(0.)), *status),
+                            _ => (
+                                hunk_hitbox.bounds,
+                                color,
+                                strip_corner_radii,
+                                *status,
+                                false,
+                            ),
                         }
                     }),
                 };
 
-                if let Some((hunk_bounds, background_color, corner_radii, status)) = hunk_to_paint {
+                if let Some((hunk_bounds, background_color, corner_radii, status, triangle)) =
+                    hunk_to_paint
+                {
                     // Flatten the background color with the editor color to prevent
                     // elements below transparent hunks from showing through
                     let flattened_background_color = cx
@@ -5471,6 +5506,18 @@ impl EditorElement {
                         .colors()
                         .editor_background
                         .blend(background_color);
+
+                    if triangle {
+                        let mut builder = gpui::PathBuilder::fill();
+                        builder.move_to(hunk_bounds.origin);
+                        builder.line_to(hunk_bounds.right_center());
+                        builder.line_to(hunk_bounds.bottom_left());
+                        builder.close();
+                        if let Some(path) = builder.build().log_err() {
+                            window.paint_path(path, flattened_background_color);
+                        }
+                        continue;
+                    }
 
                     if !self.diff_hunk_hollow(status, cx) {
                         window.paint_quad(quad(
@@ -5532,16 +5579,36 @@ impl EditorElement {
         }
     }
 
+    const ISLANDS_DIFF_STRIP_GAP: Pixels = px(4.);
+    const ISLANDS_DIFF_STRIP_WIDTH: Pixels = px(3.);
+
+    /// In islands mode, IDEA draws change markers between the line numbers and the
+    /// fold arrows instead of at the outer edge of the gutter.
+    fn islands_diff_strip_offset(gutter_dimensions: &GutterDimensions, cx: &App) -> Pixels {
+        if ui::islands_style(cx).enabled && gutter_dimensions.right_padding > Pixels::ZERO {
+            gutter_dimensions.width - gutter_dimensions.right_padding + Self::ISLANDS_DIFF_STRIP_GAP
+        } else {
+            Pixels::ZERO
+        }
+    }
+
     fn diff_hunk_bounds(
         scroll_position: gpui::Point<ScrollOffset>,
         line_height: Pixels,
         gutter_bounds: Bounds<Pixels>,
+        strip_offset: Pixels,
         hunk: &DisplayDiffHunk,
         snapshot: &EditorSnapshot,
         cx: &App,
     ) -> Bounds<Pixels> {
         let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
-        let gutter_strip_width = Self::gutter_strip_width(line_height, cx);
+        let islands_strip = strip_offset > Pixels::ZERO;
+        let gutter_strip_width = if islands_strip {
+            Self::ISLANDS_DIFF_STRIP_WIDTH
+        } else {
+            Self::gutter_strip_width(line_height, cx)
+        };
+        let gutter_origin = gutter_bounds.origin + point(strip_offset, px(0.));
 
         match hunk {
             DisplayDiffHunk::Folded { display_row, .. } => {
@@ -5549,7 +5616,7 @@ impl EditorElement {
                     - scroll_top)
                     .into();
                 let end_y = start_y + line_height;
-                let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
+                let highlight_origin = gutter_origin + point(px(0.), start_y);
                 let highlight_size = size(gutter_strip_width, end_y - start_y);
                 Bounds::new(highlight_origin, highlight_size)
             }
@@ -5562,17 +5629,26 @@ impl EditorElement {
                     let row = display_row_range.start;
 
                     let offset = ScrollPixelOffset::from(line_height / 2.);
-                    let start_y =
+                    let start_y: Pixels =
                         (row.as_f64() * ScrollPixelOffset::from(line_height) - offset - scroll_top)
                             .into();
                     let end_y = start_y + line_height;
 
-                    let width = Self::deleted_marker_base_width(
-                        EditorSettings::get_global(cx).gutter.git_gutter_width,
-                        line_height,
-                    );
-                    let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
-                    let highlight_size = size(width, end_y - start_y);
+                    let width = if islands_strip {
+                        (line_height * 0.25).floor()
+                    } else {
+                        Self::deleted_marker_base_width(
+                            EditorSettings::get_global(cx).gutter.git_gutter_width,
+                            line_height,
+                        )
+                    };
+                    let vertical_inset = if islands_strip {
+                        (line_height * 0.25).floor()
+                    } else {
+                        px(0.)
+                    };
+                    let highlight_origin = gutter_origin + point(px(0.), start_y + vertical_inset);
+                    let highlight_size = size(width, end_y - start_y - vertical_inset * 2.);
                     Bounds::new(highlight_origin, highlight_size)
                 } else {
                     let start_row = display_row_range.start;
@@ -5605,7 +5681,7 @@ impl EditorElement {
                             - scroll_top,
                     );
 
-                    let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
+                    let highlight_origin = gutter_origin + point(px(0.), start_y);
                     let highlight_size = size(gutter_strip_width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
                 }
@@ -9158,9 +9234,11 @@ impl Element for EditorElement {
                             )
                         });
 
+                    let diff_strip_offset = Self::islands_diff_strip_offset(&gutter_dimensions, cx);
                     let display_hunks = self.layout_gutter_diff_hunks(
                         line_height,
                         &gutter_hitbox,
+                        diff_strip_offset,
                         start_row..end_row,
                         &snapshot,
                         scroll_position,
@@ -10077,6 +10155,7 @@ impl Element for EditorElement {
                         hitbox,
                         gutter_hitbox,
                         display_hunks,
+                        diff_strip_offset,
                         content_origin,
                         scrollbars_layout,
                         minimap,
@@ -10305,6 +10384,7 @@ pub struct EditorLayout {
     line_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
+    diff_strip_offset: Pixels,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_diagnostics: HashMap<DisplayRow, AnyElement>,
     point_diagnostic_underline_offset: Pixels,

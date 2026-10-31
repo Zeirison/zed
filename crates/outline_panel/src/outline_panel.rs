@@ -2545,14 +2545,24 @@ impl OutlinePanel {
             outline.range, outline.text,
         )));
 
-        let label_element = outline::render_item(
-            &outline,
-            string_match
-                .map(|string_match| string_match.ranges().collect::<Vec<_>>())
-                .unwrap_or_default(),
-            cx,
-        )
-        .into_any_element();
+        let label_element = if ui::islands_style(cx).enabled {
+            render_islands_outline_label(
+                outline,
+                string_match
+                    .map(|string_match| string_match.positions.as_slice())
+                    .unwrap_or_default(),
+                cx,
+            )
+        } else {
+            outline::render_item(
+                &outline,
+                string_match
+                    .map(|string_match| string_match.ranges().collect::<Vec<_>>())
+                    .unwrap_or_default(),
+                cx,
+            )
+            .into_any_element()
+        };
 
         let is_active = match self.selected_entry() {
             Some(PanelEntry::Outline(OutlineEntry::Outline(selected))) => outline == selected,
@@ -5629,8 +5639,12 @@ impl Panel for OutlinePanel {
             .then_some(IconName::ListTree)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _: &App) -> Option<&'static str> {
-        Some("Outline Panel")
+    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<&'static str> {
+        if ui::islands_style(cx).enabled {
+            Some("Structure")
+        } else {
+            Some("Outline Panel")
+        }
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
@@ -5983,6 +5997,114 @@ impl GenerationState {
         self.match_candidates.clear();
         self.max_width_estimate_and_index = None;
     }
+}
+
+struct IslandsSymbolKind {
+    letter: &'static str,
+    light: (u32, u32),
+    dark: (u32, u32),
+}
+
+const ISLANDS_CLASS: (u32, u32) = (0x3574F0, 0xE7EFFD);
+const ISLANDS_CLASS_DARK: (u32, u32) = (0x548AF7, 0x25324D);
+const ISLANDS_FUNCTION: (u32, u32) = (0xDB3B4B, 0xFFF7F7);
+const ISLANDS_FUNCTION_DARK: (u32, u32) = (0xDB5C5C, 0x402929);
+const ISLANDS_FIELD: (u32, u32) = (0xE66D17, 0xFFF4EB);
+const ISLANDS_FIELD_DARK: (u32, u32) = (0xC77D55, 0x45322B);
+
+/// Guesses IDEA's structure-view symbol icon from the keywords that precede the
+/// symbol's name, since outline items carry no symbol kind.
+fn islands_symbol_kind(prefix: &str, depth: usize) -> Option<IslandsSymbolKind> {
+    let kind = |letter, light, dark| {
+        Some(IslandsSymbolKind {
+            letter,
+            light,
+            dark,
+        })
+    };
+    let mut words = prefix
+        .split(|character: char| !(character.is_alphanumeric() || character == '_'))
+        .filter(|word| !word.is_empty());
+    if prefix.trim().is_empty() {
+        return kind("f", ISLANDS_FIELD, ISLANDS_FIELD_DARK);
+    }
+    words.find_map(|word| match word {
+        "struct" | "class" | "union" | "record" | "object" => {
+            kind("C", ISLANDS_CLASS, ISLANDS_CLASS_DARK)
+        }
+        "impl" => kind("i", ISLANDS_CLASS, ISLANDS_CLASS_DARK),
+        "type" | "typealias" => kind("T", ISLANDS_CLASS, ISLANDS_CLASS_DARK),
+        "enum" => kind("E", (0x834DF0, 0xFAF5FF), (0xA571E6, 0x2F2936)),
+        "trait" | "interface" | "protocol" => kind("I", (0x208A3C, 0xF2FCF3), (0x57965C, 0x253627)),
+        "fn" | "def" | "func" | "fun" | "function" | "method" => {
+            if depth > 0 {
+                kind("m", ISLANDS_FUNCTION, ISLANDS_FUNCTION_DARK)
+            } else {
+                kind("f", ISLANDS_FUNCTION, ISLANDS_FUNCTION_DARK)
+            }
+        }
+        "const" | "static" | "let" | "var" | "val" => kind("v", ISLANDS_FIELD, ISLANDS_FIELD_DARK),
+        "mod" | "module" | "namespace" | "package" => {
+            kind("M", (0x6C707E, 0xEBECF0), (0xCED0D6, 0x43454A))
+        }
+        _ => None,
+    })
+}
+
+fn render_islands_outline_label(
+    outline: &Outline,
+    match_positions: &[usize],
+    cx: &App,
+) -> AnyElement {
+    let text = outline.text.as_ref();
+    let name_start = outline
+        .name_ranges
+        .first()
+        .map(|range| range.start)
+        .filter(|start| text.is_char_boundary(*start))
+        .unwrap_or(0);
+    let (prefix, name) = text.split_at(name_start);
+    let positions = match_positions
+        .iter()
+        .filter_map(|position| position.checked_sub(name_start))
+        .collect::<Vec<_>>();
+    let is_light = cx.theme().appearance().is_light();
+
+    h_flex()
+        .gap_1p5()
+        .when_some(
+            islands_symbol_kind(prefix, outline.depth),
+            |this, symbol_kind| {
+                let (foreground, background) = if is_light {
+                    symbol_kind.light
+                } else {
+                    symbol_kind.dark
+                };
+                let foreground = gpui::rgb(foreground);
+                this.child(
+                    div()
+                        .flex_none()
+                        .size(px(14.))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(foreground)
+                        .bg(gpui::rgb(background))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(9.))
+                        .line_height(px(12.))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(foreground)
+                        .child(symbol_kind.letter),
+                )
+            },
+        )
+        .child(HighlightedLabel::new(
+            SharedString::from(name.to_string()),
+            positions,
+        ))
+        .into_any_element()
 }
 
 #[cfg(test)]

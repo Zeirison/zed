@@ -21,11 +21,12 @@ use remote::RemoteConnectionOptions;
 pub use remote_connection::{RemoteConnectionModal, connect, connect_with_modal};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
+use collections::HashMap;
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, TaskExt, WeakEntity, Window, actions, px,
+    Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle, actions, px,
 };
 
 use picker::{
@@ -607,6 +608,36 @@ pub fn add_wsl_distro(
     });
 }
 
+/// Maps each workspace open in another window to that window, so the project widget can
+/// switch to it instead of reopening it.
+fn workspaces_in_other_windows(
+    window: &Window,
+    cx: &App,
+) -> HashMap<WorkspaceId, WindowHandle<MultiWorkspace>> {
+    let mut workspaces = HashMap::default();
+    if !ui::islands_style(cx).enabled {
+        return workspaces;
+    }
+    let current_window_id = window.window_handle().window_id();
+    for window_handle in cx.windows() {
+        if window_handle.window_id() == current_window_id {
+            continue;
+        }
+        let Some(window_handle) = window_handle.downcast::<MultiWorkspace>() else {
+            continue;
+        };
+        let Some(multi_workspace) = window_handle.read(cx).log_err() else {
+            continue;
+        };
+        for workspace in multi_workspace.workspaces() {
+            if let Some(workspace_id) = workspace.read(cx).database_id() {
+                workspaces.insert(workspace_id, window_handle);
+            }
+        }
+    }
+    workspaces
+}
+
 pub struct RecentProjects {
     pub picker: Entity<Picker<RecentProjectsDelegate>>,
     _subscriptions: Vec<Subscription>,
@@ -699,6 +730,8 @@ impl RecentProjects {
         let fs = Some(workspace.app_state().fs.clone());
 
         let create_new_window = create_new_window.unwrap_or_else(|| default_open_in_new_window(cx));
+        let islands = ui::islands_style(cx).enabled;
+        let open_in_other_windows = workspaces_in_other_windows(window, cx);
 
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = RecentProjectsDelegate::new(
@@ -707,7 +740,9 @@ impl RecentProjects {
                 focus_handle,
                 open_folders,
                 window_project_groups,
+                open_in_other_windows,
                 ProjectPickerStyle::Modal,
+                islands,
             );
 
             Self::new(delegate, fs, 42., window, cx)
@@ -734,6 +769,8 @@ impl RecentProjects {
             .unwrap_or_else(|| (Vec::new(), None));
 
         let create_new_window = create_new_window.unwrap_or_else(|| default_open_in_new_window(cx));
+        let islands = ui::islands_style(cx).enabled;
+        let open_in_other_windows = workspaces_in_other_windows(window, cx);
 
         cx.new(|cx| {
             let delegate = RecentProjectsDelegate::new(
@@ -742,7 +779,9 @@ impl RecentProjects {
                 focus_handle,
                 open_folders,
                 window_project_groups,
+                open_in_other_windows,
                 ProjectPickerStyle::Popover,
+                islands,
             );
             let list = Self::new(delegate, fs, 20., window, cx);
             list.picker.focus_handle(cx).focus(window, cx);
@@ -855,6 +894,9 @@ pub struct RecentProjectsDelegate {
     open_folders: Vec<OpenFolderEntry>,
     window_project_groups: Vec<ProjectGroupKey>,
     workspaces: Vec<RecentWorkspace>,
+    /// Workspaces open in other windows, listed under "Open Projects" in islands mode.
+    open_in_other_windows: HashMap<WorkspaceId, WindowHandle<MultiWorkspace>>,
+    islands: bool,
     filtered_entries: Vec<ProjectPickerEntry>,
     selected_index: usize,
     render_paths: bool,
@@ -872,14 +914,18 @@ impl RecentProjectsDelegate {
         focus_handle: FocusHandle,
         open_folders: Vec<OpenFolderEntry>,
         window_project_groups: Vec<ProjectGroupKey>,
+        open_in_other_windows: HashMap<WorkspaceId, WindowHandle<MultiWorkspace>>,
         style: ProjectPickerStyle,
+        islands: bool,
     ) -> Self {
-        let render_paths = style == ProjectPickerStyle::Modal;
+        let render_paths = style == ProjectPickerStyle::Modal || islands;
         Self {
             workspace,
             open_folders,
             window_project_groups,
             workspaces: Vec::new(),
+            open_in_other_windows,
+            islands,
             filtered_entries: Vec::new(),
             selected_index: 0,
             create_new_window,
@@ -1092,23 +1138,42 @@ impl PickerDelegate for RecentProjectsDelegate {
         };
 
         if has_recent_to_show {
-            entries.push(ProjectPickerEntry::Header("Recent Projects".into()));
-
-            if is_empty_query {
-                for (id, workspace) in self.workspaces.iter().enumerate() {
-                    if self.is_valid_recent_candidate(workspace, cx) {
-                        entries.push(ProjectPickerEntry::RecentProject(StringMatch {
-                            candidate_id: id,
-                            score: 0.0,
-                            positions: Vec::new(),
-                            string: Default::default(),
-                        }));
-                    }
-                }
+            let recent_entries: Vec<StringMatch> = if is_empty_query {
+                self.workspaces
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, workspace)| self.is_valid_recent_candidate(workspace, cx))
+                    .map(|(id, _)| StringMatch {
+                        candidate_id: id,
+                        score: 0.0,
+                        positions: Vec::new(),
+                        string: Default::default(),
+                    })
+                    .collect()
             } else {
-                for m in recent_matches {
-                    entries.push(ProjectPickerEntry::RecentProject(m));
-                }
+                recent_matches
+            };
+            let (open_elsewhere, closed): (Vec<_>, Vec<_>) =
+                recent_entries.into_iter().partition(|recent_match| {
+                    self.workspaces
+                        .get(recent_match.candidate_id)
+                        .is_some_and(|workspace| {
+                            self.open_in_other_windows
+                                .contains_key(&workspace.workspace_id)
+                        })
+                });
+
+            if !open_elsewhere.is_empty() {
+                entries.push(ProjectPickerEntry::Header("Open Projects".into()));
+                entries.extend(
+                    open_elsewhere
+                        .into_iter()
+                        .map(ProjectPickerEntry::RecentProject),
+                );
+            }
+            if !closed.is_empty() {
+                entries.push(ProjectPickerEntry::Header("Recent Projects".into()));
+                entries.extend(closed.into_iter().map(ProjectPickerEntry::RecentProject));
             }
         }
 
@@ -1207,6 +1272,32 @@ impl PickerDelegate for RecentProjectsDelegate {
             }
             Some(ProjectPickerEntry::RecentProject(selected_match)) => {
                 let candidate_id = selected_match.candidate_id;
+                if let Some((workspace_id, window_handle)) =
+                    self.workspaces.get(candidate_id).and_then(|workspace| {
+                        let window_handle =
+                            self.open_in_other_windows.get(&workspace.workspace_id)?;
+                        Some((workspace.workspace_id, *window_handle))
+                    })
+                {
+                    cx.defer(move |cx| {
+                        window_handle
+                            .update(cx, |multi_workspace, window, cx| {
+                                let workspace = multi_workspace
+                                    .workspaces()
+                                    .find(|workspace| {
+                                        workspace.read(cx).database_id() == Some(workspace_id)
+                                    })
+                                    .cloned();
+                                if let Some(workspace) = workspace {
+                                    multi_workspace.activate(workspace, None, window, cx);
+                                }
+                                window.activate_window();
+                            })
+                            .log_err();
+                    });
+                    cx.emit(DismissEvent);
+                    return;
+                }
                 self.open_recent_projects(candidate_id, secondary, window, cx);
             }
             _ => {}
@@ -1625,6 +1716,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                     SerializedWorkspaceLocation::Remote(options) => Some(options),
                 });
                 let show_icon = self.filtered_entries_include_remote_project();
+                let avatar_name = self.islands.then(|| {
+                    identity_paths
+                        .ordered_paths()
+                        .next()
+                        .and_then(|path| path.file_name())
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                });
 
                 Some(
                     ListItem::new(ix)
@@ -1640,6 +1739,15 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .flex_grow_1()
                                 .when(show_icon, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
+                                })
+                                .when_some(avatar_name, |this, avatar_name| {
+                                    this.child(
+                                        ui::project_avatar(&avatar_name, cx)
+                                            .flex_none()
+                                            .size(px(24.))
+                                            .rounded(px(5.))
+                                            .text_size(px(11.)),
+                                    )
                                 })
                                 .child({
                                     let mut highlighted = highlighted_match;
@@ -2578,7 +2686,9 @@ mod tests {
                 cx.focus_handle(),
                 vec![open_folder(0), open_folder(1)],
                 vec![project_group(0), project_group(1)],
+                HashMap::default(),
                 ProjectPickerStyle::Modal,
+                false,
             );
             delegate.set_workspaces(recent_workspaces());
             Picker::list(delegate, window, cx)
@@ -2679,7 +2789,9 @@ mod tests {
             cx.update(|cx| cx.focus_handle()),
             Vec::new(),
             vec![project_group(0), remote_project_group(1)],
+            HashMap::default(),
             ProjectPickerStyle::Modal,
+            false,
         );
         delegate.filtered_entries = vec![
             ProjectPickerEntry::ProjectGroup(StringMatch {
@@ -2729,7 +2841,9 @@ mod tests {
             cx.update(|cx| cx.focus_handle()),
             vec![local_open_folder],
             Vec::new(),
+            HashMap::default(),
             ProjectPickerStyle::Modal,
+            false,
         );
 
         let paths = PathList::new(&[shared_path]);

@@ -14744,6 +14744,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "chrono",
+ "collections",
  "db",
  "dev_container",
  "editor",
