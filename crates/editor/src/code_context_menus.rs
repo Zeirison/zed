@@ -963,6 +963,7 @@ impl CompletionsMenu {
         let label_matches = self.label_match_state.label_matches.clone();
         let last_rendered_range = self.last_rendered_range.clone();
         let style = style.clone();
+        let islands = ui::islands_style(cx).enabled;
         let list = uniform_list(
             "completions",
             self.entries.borrow().len(),
@@ -1017,9 +1018,18 @@ impl CompletionsMenu {
                             .into_iter()
                             .flat_map(|string_match| {
                                 string_match.ranges().map(|range| {
+                                    let highlight = if islands {
+                                        HighlightStyle {
+                                            font_weight: Some(FontWeight::BOLD),
+                                            color: Some(cx.theme().colors().text_accent),
+                                            ..Default::default()
+                                        }
+                                    } else {
+                                        FontWeight::BOLD.into()
+                                    };
                                     (
                                         filter_start + range.start..filter_start + range.end,
-                                        FontWeight::BOLD.into(),
+                                        highlight,
                                     )
                                 })
                             });
@@ -1035,6 +1045,12 @@ impl CompletionsMenu {
                                 // Ignore font weight for syntax highlighting, as we'll use it
                                 // for fuzzy matches.
                                 highlight.font_weight = None;
+                                // IDEA's popup isn't syntax highlighted: names use the
+                                // regular text color and the rest is muted.
+                                if islands {
+                                    highlight.color = None;
+                                    highlight.font_style = None;
+                                }
                                 if completion
                                     .source
                                     .lsp_completion(false)
@@ -1071,18 +1087,29 @@ impl CompletionsMenu {
                         let main_label = StyledText::new(main_text.to_string())
                             .with_default_highlights(&style.text, main_highlights);
 
-                        let suffix_label = if !suffix_text.is_empty() {
-                            let suffix_text_style = gpui::TextStyle {
-                                color: cx.theme().colors().text_muted,
-                                ..style.text.clone()
-                            };
-                            Some(
+                        let suffix_text_style = gpui::TextStyle {
+                            color: cx.theme().colors().text_muted,
+                            ..style.text.clone()
+                        };
+                        let islands_type_label = islands
+                            .then(|| split_islands_completion_type(suffix_text))
+                            .flatten();
+                        let suffix_label = match islands_type_label {
+                            Some((parameters, _)) if parameters.is_empty() => None,
+                            Some((parameters, _)) => Some(
+                                StyledText::new(parameters.to_string())
+                                    .with_default_highlights(&suffix_text_style, []),
+                            ),
+                            None if !suffix_text.is_empty() => Some(
                                 StyledText::new(suffix_text.to_string())
                                     .with_default_highlights(&suffix_text_style, suffix_highlights),
-                            )
-                        } else {
-                            None
+                            ),
+                            None => None,
                         };
+                        let type_label = islands_type_label.map(|(_, type_text)| {
+                            StyledText::new(type_text.to_string())
+                                .with_default_highlights(&suffix_text_style, [])
+                        });
 
                         let left_aligned_suffix =
                             matches!(completion_detail_alignment, CompletionDetailAlignment::Left);
@@ -1092,6 +1119,11 @@ impl CompletionsMenu {
                             CompletionDetailAlignment::Right,
                         );
 
+                        let documentation = if type_label.is_some() {
+                            &None
+                        } else {
+                            documentation
+                        };
                         let documentation_label = match documentation {
                             Some(CompletionDocumentation::SingleLine(text))
                             | Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
@@ -1136,6 +1168,14 @@ impl CompletionsMenu {
                             });
 
                         let kind_letter_slot = match completion_menu_item_kind {
+                            _ if islands => Some(
+                                completion
+                                    .kind()
+                                    .and_then(islands_symbol_kind)
+                                    .map(|kind| ui::islands_symbol_badge(kind, cx))
+                                    .unwrap_or_else(|| div().flex_none().size(px(14.)))
+                                    .into_any_element(),
+                            ),
                             CompletionMenuItemKind::Off => None,
                             CompletionMenuItemKind::Symbol => Some(render_completion_kind_letter(
                                 completion.kind(),
@@ -1193,6 +1233,19 @@ impl CompletionsMenu {
                                                 this.child(div().truncate().child(suffix))
                                             }),
                                     )
+                                    .when_some(type_label, |this, type_label| {
+                                        this.child(
+                                            div()
+                                                .flex_none()
+                                                // The list item doesn't shrink its content,
+                                                // so long types are capped to keep the name visible.
+                                                .max_w(px(260.))
+                                                .ml_auto()
+                                                .pl_4()
+                                                .truncate()
+                                                .child(type_label),
+                                        )
+                                    })
                                     .when_some(documentation_label, |this, doc| {
                                         this.child(
                                             div()
@@ -1778,6 +1831,52 @@ fn completion_kind_highlight_name(kind: CompletionItemKind) -> Option<&'static s
         CompletionItemKind::SNIPPET => "string",
         _ => return None,
     })
+}
+
+/// Splits the part of a completion label after its name into parameters and a type,
+/// so the type can be right-aligned like in IDEA's popup: `(x: u32) -> bool`
+/// becomes `(x: u32)` and `bool`, and `: String` becomes an empty parameter list
+/// and `String`.
+fn split_islands_completion_type(suffix: &str) -> Option<(&str, &str)> {
+    if let Some(type_text) = suffix.strip_prefix(": ") {
+        return Some(("", type_text.trim()));
+    }
+    let mut depth = 0i32;
+    let mut arrow_index = None;
+    for (index, character) in suffix.char_indices() {
+        match character {
+            '(' | '<' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '>' if !suffix[..index].ends_with('-') => depth -= 1,
+            '-' if depth == 0 && suffix[index..].starts_with("->") => arrow_index = Some(index),
+            _ => {}
+        }
+    }
+    let arrow_index = arrow_index?;
+    let type_text = suffix[arrow_index + "->".len()..].trim();
+    if type_text.is_empty() {
+        return None;
+    }
+    Some((suffix[..arrow_index].trim_end(), type_text))
+}
+
+fn islands_symbol_kind(kind: CompletionItemKind) -> Option<ui::IslandsSymbolKind> {
+    use ui::IslandsSymbolKind as Kind;
+    match kind {
+        CompletionItemKind::METHOD | CompletionItemKind::CONSTRUCTOR => Some(Kind::Method),
+        CompletionItemKind::FUNCTION => Some(Kind::Function),
+        CompletionItemKind::FIELD | CompletionItemKind::ENUM_MEMBER => Some(Kind::Field),
+        CompletionItemKind::VARIABLE | CompletionItemKind::CONSTANT | CompletionItemKind::VALUE => {
+            Some(Kind::Variable)
+        }
+        CompletionItemKind::PROPERTY => Some(Kind::Property),
+        CompletionItemKind::CLASS | CompletionItemKind::STRUCT => Some(Kind::Class),
+        CompletionItemKind::TYPE_PARAMETER => Some(Kind::TypeAlias),
+        CompletionItemKind::INTERFACE => Some(Kind::Interface),
+        CompletionItemKind::ENUM => Some(Kind::Enum),
+        CompletionItemKind::MODULE => Some(Kind::Module),
+        _ => None,
+    }
 }
 
 fn split_completion_label<'a>(

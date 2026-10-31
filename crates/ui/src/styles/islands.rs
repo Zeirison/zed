@@ -73,3 +73,76 @@ pub fn project_avatar(name: &str, cx: &App) -> Div {
         .child(initials.to_uppercase())
         .when(cx.theme().appearance().is_light(), |this| this.opacity(0.9))
 }
+
+/// Symbol kinds that get one of IntelliJ's round symbol icons, as used by the
+/// structure view and the completion popup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IslandsSymbolKind {
+    Class,
+    Implementation,
+    TypeAlias,
+    Enum,
+    Interface,
+    Method,
+    Function,
+    Field,
+    Property,
+    Variable,
+    Module,
+}
+
+impl IslandsSymbolKind {
+    fn letter(self) -> &'static str {
+        match self {
+            Self::Class => "C",
+            Self::Implementation => "i",
+            Self::TypeAlias => "T",
+            Self::Enum => "E",
+            Self::Interface => "I",
+            Self::Method => "m",
+            Self::Function | Self::Field => "f",
+            Self::Property => "p",
+            Self::Variable => "v",
+            Self::Module => "M",
+        }
+    }
+
+    /// Foreground and background colors from IntelliJ's expui node icons.
+    fn colors(self, is_light: bool) -> (u32, u32) {
+        match (self, is_light) {
+            (Self::Class | Self::Implementation | Self::TypeAlias, true) => (0x3574F0, 0xE7EFFD),
+            (Self::Class | Self::Implementation | Self::TypeAlias, false) => (0x548AF7, 0x25324D),
+            (Self::Enum | Self::Property, true) => (0x834DF0, 0xFAF5FF),
+            (Self::Enum | Self::Property, false) => (0xA571E6, 0x2F2936),
+            (Self::Interface, true) => (0x208A3C, 0xF2FCF3),
+            (Self::Interface, false) => (0x57965C, 0x253627),
+            (Self::Method | Self::Function, true) => (0xDB3B4B, 0xFFF7F7),
+            (Self::Method | Self::Function, false) => (0xDB5C5C, 0x402929),
+            (Self::Field | Self::Variable, true) => (0xE66D17, 0xFFF4EB),
+            (Self::Field | Self::Variable, false) => (0xC77D55, 0x45322B),
+            (Self::Module, true) => (0x6C707E, 0xEBECF0),
+            (Self::Module, false) => (0xCED0D6, 0x43454A),
+        }
+    }
+}
+
+/// A round, letter-marked symbol icon like the ones in IntelliJ's structure view.
+pub fn islands_symbol_badge(kind: IslandsSymbolKind, cx: &App) -> Div {
+    let (foreground, background) = kind.colors(cx.theme().appearance().is_light());
+    let foreground = rgb(foreground);
+    div()
+        .flex_none()
+        .size(px(14.))
+        .rounded_full()
+        .border_1()
+        .border_color(foreground)
+        .bg(rgb(background))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(9.))
+        .line_height(px(12.))
+        .font_weight(FontWeight::BOLD)
+        .text_color(foreground)
+        .child(kind.letter())
+}
