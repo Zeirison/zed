@@ -180,6 +180,7 @@ pub enum IconName {
     Indicator,
     Info,
     IslandsAdd,
+    IslandsAiChat,
     IslandsCollapseAll,
     IslandsCommit,
     IslandsDebug,

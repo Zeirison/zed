@@ -5451,9 +5451,17 @@ impl ThreadView {
             (IconName::Maximize, "Expand Message Editor")
         };
 
-        let max_content_width = AgentSettings::get_global(cx).max_content_width;
+        let islands = ui::islands_style(cx).enabled;
+        let composer_border = if focus_handle.contains_focused(window, cx) {
+            cx.theme().colors().border_focused
+        } else {
+            cx.theme().colors().border
+        };
+        let max_content_width = AgentSettings::get_global(cx)
+            .max_content_width
+            .filter(|_| !islands);
         let has_messages = self.has_visible_conversation(cx);
-        let fills_container = !has_messages || editor_expanded;
+        let fills_container = (!has_messages && !islands) || editor_expanded;
         let composer_is_read_only = self.message_editor.read(cx).editor().read(cx).read_only(cx);
         let discard_draft_button = composer_is_read_only.then(|| {
             div()
@@ -5474,17 +5482,21 @@ impl ThreadView {
 
         h_flex()
             .py_2()
+            .when(islands, |this| this.px_2())
             .bg(editor_bg_color)
             .justify_center()
             .on_action(cx.listener(Self::handle_message_editor_move_up))
             .map(|this| {
                 if has_messages {
                     this.on_action(cx.listener(Self::expand_message_editor))
-                        .border_t_1()
-                        .border_color(cx.theme().colors().border)
+                        .when(!islands, |this| {
+                            this.border_t_1().border_color(cx.theme().colors().border)
+                        })
                         .when(editor_expanded, |this| this.h(vh(0.8, window)))
                 } else {
-                    this.flex_1().size_full()
+                    this.flex_1()
+                        .size_full()
+                        .when(islands, |this| this.items_end())
                 }
             })
             .child(
@@ -5494,6 +5506,12 @@ impl ThreadView {
                     .min_w_0()
                     .when(fills_container, |this| this.h_full())
                     .px_2()
+                    .when(islands, |this| {
+                        this.py_1p5()
+                            .rounded(ui::islands_control_radius(cx))
+                            .border_1()
+                            .border_color(composer_border)
+                    })
                     .flex_shrink_1()
                     .flex_grow_0()
                     .justify_between()
@@ -7335,6 +7353,7 @@ impl ThreadView {
                 };
 
                 let editing = self.editing_message == Some(entry_ix);
+                let islands = ui::islands_style(cx).enabled;
                 let editor_focus = editor.focus_handle(cx).is_focused(window);
                 let focus_border = cx.theme().colors().border_focused;
                 // Drop shadows render as a dark halo on transparent windows.
@@ -7378,15 +7397,26 @@ impl ThreadView {
                                 div()
                                     .py_3()
                                     .px_2()
-                                    .rounded_md()
-                                    .bg(cx.theme().colors().editor_background)
+                                    .map(|this| {
+                                        if islands {
+                                            this.rounded(ui::islands_control_radius(cx))
+                                                .bg(cx.theme().colors().element_hover)
+                                        } else {
+                                            this.rounded_md()
+                                                .bg(cx.theme().colors().editor_background)
+                                        }
+                                    })
                                     .border_1()
                                     .when(is_indented, |this| {
                                         this.py_2().px_2().when(opaque_window, |this| {
                                             this.shadow_sm()
                                         })
                                     })
-                                    .border_color(cx.theme().colors().border)
+                                    .border_color(if islands {
+                                        gpui::transparent_black()
+                                    } else {
+                                        cx.theme().colors().border
+                                    })
                                     .map(|this| {
                                         if !is_editable {
                                             if is_subagent {
@@ -7399,6 +7429,9 @@ impl ThreadView {
                                         }
                                         if editing && !editor_focus {
                                             return this.border_dashed()
+                                        }
+                                        if islands {
+                                            return this;
                                         }
                                         this.when(opaque_window, |this| this.shadow_md())
                                             .hover(|s| {
@@ -8469,7 +8502,8 @@ impl ThreadView {
 
     pub(crate) fn sync_editor_mode(&mut self, cx: &mut Context<Self>) {
         let has_messages = self.has_visible_conversation(cx);
-        let v2_empty_state = !has_messages;
+        // The islands layout keeps the composer at the bottom, sized to its text.
+        let v2_empty_state = !has_messages && !ui::islands_style(cx).enabled;
 
         if !has_messages {
             self.editor_expanded = false;

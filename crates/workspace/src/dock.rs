@@ -1783,13 +1783,6 @@ pub fn render_panel_header_controls_at(
     dock_position: DockPosition,
     title: SharedString,
 ) -> impl IntoElement {
-    let hide_action = match dock_position {
-        DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),
-        DockPosition::Bottom => crate::ToggleBottomDock.boxed_clone(),
-        DockPosition::Right => crate::ToggleRightDock.boxed_clone(),
-    };
-    let hide_tooltip: SharedString = format!("Hide {title}").into();
-
     let options_menu = {
         let panel = panel.clone();
         PopoverMenu::new("panel-header-options")
@@ -1832,13 +1825,28 @@ pub fn render_panel_header_controls_at(
     h_flex()
         .gap_0p5()
         .child(options_menu)
-        .child(panel_header_button(
-            panel,
-            "panel-header-hide",
-            IconName::IslandsHide,
-            hide_tooltip,
-            hide_action,
-        ))
+        .child(render_panel_hide_button(panel, dock_position, title))
+}
+
+/// The button that hides a panel's dock, for panels that keep their own
+/// options menu in the islands layout.
+pub fn render_panel_hide_button(
+    panel: Arc<dyn PanelHandle>,
+    dock_position: DockPosition,
+    title: SharedString,
+) -> IconButton {
+    let hide_action = match dock_position {
+        DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),
+        DockPosition::Bottom => crate::ToggleBottomDock.boxed_clone(),
+        DockPosition::Right => crate::ToggleRightDock.boxed_clone(),
+    };
+    panel_header_button(
+        panel,
+        "panel-header-hide",
+        IconName::IslandsHide,
+        format!("Hide {title}").into(),
+        hide_action,
+    )
 }
 
 fn tool_window_stripe_icon(icon: IconName) -> IconName {
@@ -1849,6 +1857,7 @@ fn tool_window_stripe_icon(icon: IconName) -> IconName {
         IconName::ListTree => IconName::IslandsStructure,
         IconName::Debug => IconName::IslandsDebug,
         IconName::UserGroup => IconName::IslandsUsers,
+        IconName::ZedAssistant => IconName::IslandsAiChat,
         icon => icon,
     }
 }

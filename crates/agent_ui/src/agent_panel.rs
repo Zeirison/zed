@@ -75,7 +75,7 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
-    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
+    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, FontWeight, KeyContext, Pixels,
     PlatformDisplay, Subscription, Task, TaskExt, WeakEntity, WindowHandle, prelude::*,
     pulsating_between,
 };
@@ -100,7 +100,7 @@ use util::ResultExt as _;
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, MultiWorkspace, PathList, SerializedPathList,
     ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, panel_header_height, render_panel_hide_button},
     item::{ItemEvent, ItemHandle},
 };
 
@@ -5124,8 +5124,12 @@ impl Panel for AgentPanel {
         (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAssistant)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Agent Panel")
+    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<&'static str> {
+        if ui::islands_style(cx).enabled {
+            Some("AI Chat")
+        } else {
+            Some("Agent Panel")
+        }
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
@@ -5689,8 +5693,15 @@ impl AgentPanel {
 
         PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
-                IconButton::new("agent-options-menu", IconName::Ellipsis)
-                    .icon_size(IconSize::Small),
+                IconButton::new(
+                    "agent-options-menu",
+                    if ui::islands_style(cx).enabled {
+                        IconName::IslandsMore
+                    } else {
+                        IconName::Ellipsis
+                    },
+                )
+                .icon_size(IconSize::Small),
                 move |_window, cx| {
                     Tooltip::for_action_in(
                         "Toggle Agent Menu",
@@ -6168,7 +6179,10 @@ impl AgentPanel {
                 this.toggle_zoom(&ToggleZoom, window, cx);
             }));
 
-        let max_content_width = AgentSettings::get_global(cx).max_content_width;
+        let islands = ui::islands_style(cx).enabled;
+        let max_content_width = AgentSettings::get_global(cx)
+            .max_content_width
+            .filter(|_| !islands);
 
         let base_container = h_flex()
             .size_full()
@@ -6189,8 +6203,15 @@ impl AgentPanel {
         let toolbar_content = {
             let new_thread_menu = PopoverMenu::new("new_thread_menu")
                 .trigger_with_tooltip(
-                    IconButton::new("new_thread_menu_btn", IconName::Plus)
-                        .icon_size(IconSize::Small),
+                    IconButton::new(
+                        "new_thread_menu_btn",
+                        if islands {
+                            IconName::IslandsAdd
+                        } else {
+                            IconName::Plus
+                        },
+                    )
+                    .icon_size(IconSize::Small),
                     {
                         move |_window, cx| {
                             Tooltip::for_action_in(
@@ -6221,9 +6242,20 @@ impl AgentPanel {
                         .flex_1()
                         .min_w_0()
                         .overflow_hidden()
-                        .gap(DynamicSpacing::Base04.rems(cx))
-                        .pl(DynamicSpacing::Base04.rems(cx))
-                        .child(selected_agent.into_any_element())
+                        .map(|this| {
+                            if islands {
+                                this.gap_2().child(
+                                    Label::new("AI Chat")
+                                        .weight(FontWeight::SEMIBOLD)
+                                        .single_line()
+                                        .flex_none(),
+                                )
+                            } else {
+                                this.gap(DynamicSpacing::Base04.rems(cx))
+                                    .pl(DynamicSpacing::Base04.rems(cx))
+                                    .child(selected_agent.into_any_element())
+                            }
+                        })
                         .child(match empty_thread_title {
                             Some(title) => title,
                             None => self.render_title_view(window, cx),
@@ -6231,26 +6263,48 @@ impl AgentPanel {
                 )
                 .child(
                     h_flex()
-                        .px_1()
+                        .when(!islands, |this| this.px_1())
                         .h_full()
                         .flex_none()
-                        .gap_1()
+                        .map(|this| {
+                            if islands {
+                                this.gap_0p5()
+                            } else {
+                                this.gap_1()
+                            }
+                        })
                         .children(sandbox_status)
                         .when(can_create_entries, |this| this.child(new_thread_menu))
                         .child(full_screen_button)
-                        .child(self.render_panel_options_menu(window, cx)),
+                        .child(self.render_panel_options_menu(window, cx))
+                        .when(islands, |this| {
+                            this.child(render_panel_hide_button(
+                                Arc::new(cx.entity()),
+                                self.position(window, cx),
+                                "AI Chat".into(),
+                            ))
+                        }),
                 )
                 .into_any_element()
         };
 
         h_flex()
             .id("agent-panel-toolbar")
-            .h(Tab::container_height(cx))
             .flex_shrink_0()
             .max_w_full()
-            .bg(cx.theme().colors().tab_bar_background)
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
+            .map(|this| {
+                if islands {
+                    this.h(panel_header_height(cx))
+                        .pl_3()
+                        .pr_1()
+                        .bg(cx.theme().colors().panel_background)
+                } else {
+                    this.h(Tab::container_height(cx))
+                        .bg(cx.theme().colors().tab_bar_background)
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                }
+            })
             .child(toolbar_content)
     }
 

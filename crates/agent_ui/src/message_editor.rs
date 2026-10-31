@@ -2095,7 +2095,12 @@ impl Render for MessageEditor {
                 EditorElement::new(
                     &self.editor,
                     EditorStyle {
-                        background: cx.theme().colors().editor_background,
+                        // Islands draws the composer and user messages as tinted boxes.
+                        background: if ui::islands_style(cx).enabled {
+                            gpui::transparent_black()
+                        } else {
+                            cx.theme().colors().editor_background
+                        },
                         local_player: cx.theme().players().local(),
                         text: text_style,
                         syntax: cx.theme().syntax().clone(),
