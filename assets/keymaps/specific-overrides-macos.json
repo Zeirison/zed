@@ -51,4 +51,11 @@
       "cmd-l": "pane::SplitRight",
     },
   },
+  {
+    "context": "SearchEverywhere > Editor",
+    "bindings": {
+      "tab": "search_everywhere::NextTab",
+      "shift-tab": "search_everywhere::PreviousTab",
+    },
+  },
 ]

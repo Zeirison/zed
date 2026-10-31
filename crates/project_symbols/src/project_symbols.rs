@@ -18,6 +18,21 @@ use workspace::{
 };
 
 pub fn init(cx: &mut App) {
+    workspace::search_everywhere::register_search_everywhere_tab(
+        workspace::search_everywhere::SearchEverywhereTab::Symbols,
+        |workspace, query, window, cx| {
+            let project = workspace.project().clone();
+            let handle = cx.entity().downgrade();
+            workspace.toggle_modal(window, cx, move |window, cx| {
+                let delegate = ProjectSymbolsDelegate::new(handle, project.clone());
+                let preview = picker_preview::editor_preview(project, window, cx);
+                let picker = Picker::uniform_list_with_preview(delegate, preview, window, cx);
+                picker.set_query(&query, window, cx);
+                picker
+            })
+        },
+        cx,
+    );
     cx.observe_new(
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(
@@ -109,6 +124,10 @@ impl ProjectSymbolsDelegate {
 
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
+
+    fn search_everywhere_tab(&self) -> Option<workspace::search_everywhere::SearchEverywhereTab> {
+        Some(workspace::search_everywhere::SearchEverywhereTab::Symbols)
+    }
 
     fn name() -> &'static str {
         "project symbols"

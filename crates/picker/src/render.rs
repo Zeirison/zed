@@ -21,6 +21,7 @@ use gpui::Focusable as _;
 use std::sync::Arc;
 use ui::{Divider, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
+use workspace::search_everywhere;
 
 pub mod window_controls;
 
@@ -156,8 +157,16 @@ impl<D: PickerDelegate> Picker<D> {
         let editor_position = self.delegate.editor_position();
         let picker_bounds = self.picker_bounds.clone();
 
+        let search_everywhere_tab = self
+            .delegate
+            .search_everywhere_tab()
+            .filter(|_| ui::islands_style(cx).enabled);
+
         let mut key_context = KeyContext::default();
         key_context.add("Picker");
+        if search_everywhere_tab.is_some() {
+            key_context.add("SearchEverywhere");
+        }
         if self.preview.is_some() {
             key_context.add("with_preview");
         }
@@ -206,6 +215,21 @@ impl<D: PickerDelegate> Picker<D> {
             .on_action(cx.listener(Self::toggle_actions_menu))
             .on_action(cx.listener(Self::toggle_multi_select))
             .on_action(cx.listener(Self::multi_select_next))
+            .when_some(search_everywhere_tab, |this, tab| {
+                this.on_action(cx.listener(move |picker, _: &search_everywhere::NextTab, window, cx| {
+                    picker.switch_search_everywhere_tab(tab, true, window, cx)
+                }))
+                .on_action(cx.listener(
+                    move |picker, _: &search_everywhere::PreviousTab, window, cx| {
+                        picker.switch_search_everywhere_tab(tab, false, window, cx)
+                    },
+                ))
+                .child(search_everywhere::render_search_everywhere_tabs(
+                    tab,
+                    self.query(cx),
+                    cx,
+                ))
+            })
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::Start {

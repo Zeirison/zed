@@ -70,6 +70,14 @@ pub struct FileFinder {
 }
 
 pub fn init(cx: &mut App) {
+    workspace::search_everywhere::register_search_everywhere_tab(
+        workspace::search_everywhere::SearchEverywhereTab::Files,
+        |workspace, query, window, cx| {
+            let seed_query = (!query.is_empty()).then_some(query);
+            FileFinder::open(workspace, false, None, seed_query, window, cx).detach();
+        },
+        cx,
+    );
     cx.observe_new(FileFinder::register).detach();
     cx.observe_new(OpenPathPrompt::register).detach();
     cx.observe_new(OpenPathPrompt::register_new_path).detach();
@@ -1940,6 +1948,10 @@ fn full_path_budget(
 
 impl PickerDelegate for FileFinderDelegate {
     type ListItem = ListItem;
+
+    fn search_everywhere_tab(&self) -> Option<workspace::search_everywhere::SearchEverywhereTab> {
+        Some(workspace::search_everywhere::SearchEverywhereTab::Files)
+    }
 
     fn name() -> &'static str {
         "file finder"

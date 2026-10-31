@@ -47,4 +47,11 @@
       "ctrl-shift-enter": "text_finder::ToggleFoldAll",
     },
   },
+  {
+    "context": "SearchEverywhere > Editor",
+    "bindings": {
+      "tab": "search_everywhere::NextTab",
+      "shift-tab": "search_everywhere::PreviousTab",
+    },
+  },
 ]

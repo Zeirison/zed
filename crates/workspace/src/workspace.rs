@@ -15,6 +15,7 @@ pub mod path_list {
 }
 pub mod path_link;
 mod persistence;
+pub mod search_everywhere;
 pub mod searchable;
 pub mod security_modal;
 pub mod shared_screen;
@@ -8289,6 +8290,8 @@ impl Workspace {
                     }
                 },
             ))
+            .on_action(cx.listener(search_everywhere::open_tab))
+            .on_action(cx.listener(search_everywhere::toggle))
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
             .on_action(cx.listener(Self::close_item_in_all_panes))

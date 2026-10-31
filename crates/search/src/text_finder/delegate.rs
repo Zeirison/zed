@@ -722,6 +722,10 @@ const MAX_MATCH_CONTEXT_BYTES: usize = 512;
 impl PickerDelegate for Delegate {
     type ListItem = AnyElement;
 
+    fn search_everywhere_tab(&self) -> Option<workspace::search_everywhere::SearchEverywhereTab> {
+        Some(workspace::search_everywhere::SearchEverywhereTab::Text)
+    }
+
     fn name() -> &'static str {
         "text finder"
     }

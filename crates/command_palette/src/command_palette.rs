@@ -36,6 +36,11 @@ use zed_actions::{OpenZedUrl, command_palette::Toggle};
 actions!(command_palette, [RemoveSelected]);
 
 pub fn init(cx: &mut App) {
+    workspace::search_everywhere::register_search_everywhere_tab(
+        workspace::search_everywhere::SearchEverywhereTab::Actions,
+        |workspace, query, window, cx| CommandPalette::toggle(workspace, &query, window, cx),
+        cx,
+    );
     CommandPaletteSettings::register(cx);
     command_palette_hooks::init(cx);
     cx.observe_new(CommandPalette::register).detach();
@@ -515,6 +520,10 @@ impl CommandPaletteDelegate {
 
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
+
+    fn search_everywhere_tab(&self) -> Option<workspace::search_everywhere::SearchEverywhereTab> {
+        Some(workspace::search_everywhere::SearchEverywhereTab::Actions)
+    }
 
     fn name() -> &'static str {
         "command palette"

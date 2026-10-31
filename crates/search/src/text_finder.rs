@@ -120,6 +120,22 @@ fn load_last_search(workspace_id: Option<WorkspaceId>, cx: &App) -> Option<Searc
 }
 
 pub fn init(cx: &mut App) {
+    workspace::search_everywhere::register_search_everywhere_tab(
+        workspace::search_everywhere::SearchEverywhereTab::Text,
+        |workspace, query, window, cx| {
+            let seed_query = if query.is_empty() {
+                TextFinder::seed_query(workspace, window, cx)
+            } else {
+                Some(SearchSeed {
+                    query: QuerySeed::Text(query),
+                    options: load_last_search(workspace.database_id(), cx)
+                        .and_then(|seed| seed.options),
+                })
+            };
+            TextFinder::open(seed_query, window, cx).detach();
+        },
+        cx,
+    );
     cx.observe_new(TextFinder::register).detach();
 }
 

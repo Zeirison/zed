@@ -393,6 +393,12 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
 
+    /// The Search Everywhere tab this picker stands for. In islands mode such
+    /// pickers show a row of tabs above the query editor.
+    fn search_everywhere_tab(&self) -> Option<workspace::search_everywhere::SearchEverywhereTab> {
+        None
+    }
+
     fn render_header(
         &self,
         _window: &mut Window,
@@ -1310,6 +1316,28 @@ impl<D: PickerDelegate> Picker<D> {
             preview.update(update, window, cx);
         }
         cx.notify();
+    }
+
+    fn switch_search_everywhere_tab(
+        &mut self,
+        tab: workspace::search_everywhere::SearchEverywhereTab,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(next_tab) =
+            workspace::search_everywhere::adjacent_search_everywhere_tab(tab, forward, cx)
+        else {
+            return;
+        };
+        window.dispatch_action(
+            workspace::search_everywhere::OpenTab {
+                tab: next_tab,
+                query: self.query(cx),
+            }
+            .boxed_clone(),
+            cx,
+        );
     }
 
     pub fn query(&self, cx: &App) -> String {
