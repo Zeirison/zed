@@ -251,7 +251,31 @@
             "font_style": "italic"
           },
           "function": {
+            "color": "#bcbec4ff"
+          },
+          "function.method": {
+            "color": "#bcbec4ff"
+          },
+          "function.definition": {
             "color": "#56a8f5ff"
+          },
+          "function.method.definition": {
+            "color": "#56a8f5ff"
+          },
+          "function.special": {
+            "color": "#56a8f5ff"
+          },
+          "function.special.definition": {
+            "color": "#56a8f5ff"
+          },
+          "type.builtin": {
+            "color": "#cf8e6dff"
+          },
+          "type.interface": {
+            "color": "#bcbec4ff"
+          },
+          "keyword.control": {
+            "color": "#cf8e6dff"
           },
           "property": {
             "color": "#c77dbbff"
@@ -624,7 +648,31 @@
             "font_style": "italic"
           },
           "function": {
+            "color": "#080808ff"
+          },
+          "function.method": {
+            "color": "#080808ff"
+          },
+          "function.definition": {
             "color": "#00627aff"
+          },
+          "function.method.definition": {
+            "color": "#00627aff"
+          },
+          "function.special": {
+            "color": "#00627aff"
+          },
+          "function.special.definition": {
+            "color": "#00627aff"
+          },
+          "type.builtin": {
+            "color": "#0033b3ff"
+          },
+          "type.interface": {
+            "color": "#080808ff"
+          },
+          "keyword.control": {
+            "color": "#0033b3ff"
           },
           "property": {
             "color": "#871094ff"

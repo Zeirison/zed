@@ -867,8 +867,8 @@
   "use_smartcase_search": false,
   // Inlay hint related settings
   "inlay_hints": {
-    // Global switch to toggle hints on and off, switched off by default.
-    "enabled": false,
+    // Global switch to toggle hints on and off.
+    "enabled": true,
     // Toggle certain types of hints on and off, all switched on by default.
     "show_type_hints": true,
     "show_parameter_hints": true,
@@ -878,7 +878,7 @@
     // Whether to show a background for inlay hints.
     //
     // If set to `true`, the background will use the `hint.background` color from the current theme.
-    "show_background": false,
+    "show_background": true,
     // Time to wait after editing the buffer, before requesting the hints,
     // set to 0 to disable debouncing.
     "edit_debounce_ms": 700,
