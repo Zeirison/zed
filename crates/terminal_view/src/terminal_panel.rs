@@ -2,6 +2,7 @@ use std::{cmp, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
 
 use crate::{
     TerminalView, default_working_directory,
+    run_panel::{self, RunPanel},
     persistence::{
         SerializedItems, SerializedTerminalPanel, deserialize_terminal_panel, serialize_pane_group,
     },
@@ -823,10 +824,12 @@ impl TerminalPanel {
                 .map(move |(index, terminal_view)| (index, pane.clone(), terminal_view))
         };
 
+        let run_pane = run_panel::run_pane(workspace.read(cx), cx);
         self.center
             .panes()
             .into_iter()
             .cloned()
+            .chain(run_pane)
             .flat_map(pane_terminal_views)
             .chain(
                 workspace
@@ -918,6 +921,7 @@ impl TerminalPanel {
             let pane = terminal_panel
                 .read_with(cx, |terminal_panel, _| terminal_panel.active_pane.clone())?;
             workspace.update_in(cx, |workspace, window, cx| {
+                let run_pane = run_panel::run_pane(workspace, cx);
                 let terminal_view = Box::new(cx.new(|cx| {
                     TerminalView::new(
                         terminal.clone(),
@@ -931,15 +935,15 @@ impl TerminalPanel {
 
                 let take_focus = reveal_strategy == RevealStrategy::Always
                     && !workspace.has_active_modal(window, cx);
-                match reveal_strategy {
-                    RevealStrategy::Always if take_focus => {
-                        workspace.focus_panel::<Self>(window, cx);
-                    }
-                    RevealStrategy::Always | RevealStrategy::NoFocus => {
-                        workspace.open_panel::<Self>(window, cx);
-                    }
-                    RevealStrategy::Never => {}
-                }
+                reveal_task_panel(
+                    workspace,
+                    run_pane.is_some(),
+                    reveal_strategy,
+                    take_focus,
+                    window,
+                    cx,
+                );
+                let pane = run_pane.unwrap_or(pane);
 
                 pane.update(cx, |pane, cx| {
                     pane.add_item(terminal_view, true, take_focus, None, window, cx);
@@ -1139,8 +1143,11 @@ impl TerminalPanel {
                 terminal_to_replace.set_terminal(new_terminal.clone(), window, cx);
             })?;
 
+            let in_run_panel = task_workspace.read_with(cx, |workspace, cx| {
+                run_panel::run_pane(workspace, cx).is_some_and(|run_pane| run_pane == task_pane)
+            })?;
             let reveal_target = terminal_panel.update(cx, |panel, _| {
-                if panel.center.panes().iter().any(|p| **p == task_pane) {
+                if in_run_panel || panel.center.panes().iter().any(|p| **p == task_pane) {
                     RevealTarget::Dock
                 } else {
                     RevealTarget::Center
@@ -1178,7 +1185,14 @@ impl TerminalPanel {
                         cx.spawn(async move |cx| {
                             task_workspace
                                 .update_in(cx, |workspace, window, cx| {
-                                    workspace.focus_panel::<Self>(window, cx)
+                                    reveal_task_panel(
+                                        workspace,
+                                        in_run_panel,
+                                        RevealStrategy::Always,
+                                        true,
+                                        window,
+                                        cx,
+                                    )
                                 })
                                 .ok()
                         })
@@ -1205,7 +1219,14 @@ impl TerminalPanel {
                         cx.spawn(async move |cx| {
                             task_workspace
                                 .update_in(cx, |workspace, window, cx| {
-                                    workspace.open_panel::<Self>(window, cx)
+                                    reveal_task_panel(
+                                        workspace,
+                                        in_run_panel,
+                                        RevealStrategy::NoFocus,
+                                        false,
+                                        window,
+                                        cx,
+                                    )
                                 })
                                 .ok()
                         })
@@ -1323,6 +1344,31 @@ pub fn prepare_task_for_spawn(
 
 fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
     workspace.project().read(cx).supports_terminal(cx)
+}
+
+fn reveal_task_panel(
+    workspace: &mut Workspace,
+    in_run_panel: bool,
+    reveal_strategy: RevealStrategy,
+    take_focus: bool,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    match (reveal_strategy, in_run_panel) {
+        (RevealStrategy::Always, true) if take_focus => {
+            workspace.focus_panel::<RunPanel>(window, cx);
+        }
+        (RevealStrategy::Always, false) if take_focus => {
+            workspace.focus_panel::<TerminalPanel>(window, cx);
+        }
+        (RevealStrategy::Always | RevealStrategy::NoFocus, true) => {
+            workspace.open_panel::<RunPanel>(window, cx);
+        }
+        (RevealStrategy::Always | RevealStrategy::NoFocus, false) => {
+            workspace.open_panel::<TerminalPanel>(window, cx);
+        }
+        (RevealStrategy::Never, _) => {}
+    }
 }
 
 pub fn new_terminal_pane(

@@ -1,4 +1,5 @@
 mod persistence;
+pub mod run_panel;
 pub mod terminal_element;
 pub mod terminal_panel;
 mod terminal_path_like_target;
@@ -107,6 +108,7 @@ pub struct RenameTerminal;
 
 pub fn init(cx: &mut App) {
     terminal_panel::init(cx);
+    run_panel::init(cx);
 
     register_serializable_item::<TerminalView>(cx);
 
