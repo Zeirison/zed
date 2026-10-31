@@ -1194,6 +1194,7 @@ pub struct GitPanel {
     diff_stat_total: DiffStat,
     new_staged_count: usize,
     pending_commit: Option<Task<()>>,
+    push_after_commit: bool,
     pending_remote_operation: Option<RemoteOperationKind>,
     amend_pending: bool,
     original_commit_message: Option<String>,
@@ -1539,6 +1540,7 @@ impl GitPanel {
                 changes_count: 0,
                 diff_stat_total: DiffStat::default(),
                 pending_commit: None,
+                push_after_commit: false,
                 pending_remote_operation: None,
                 amend_pending,
                 original_commit_message,
@@ -4122,8 +4124,12 @@ impl GitPanel {
             this.update_in(cx, |this, window, cx| {
                 this.pending_commit.take();
 
+                let push_after_commit = std::mem::take(&mut this.push_after_commit);
                 match result {
                     Ok(()) => {
+                        if push_after_commit {
+                            this.push(false, false, window, cx);
+                        }
                         this.set_skip_hooks_enabled(false, cx);
                         if options.amend {
                             this.set_amend_pending(false, cx);
@@ -6668,12 +6674,19 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let menu_open = self.commit_menu_handle.is_deployed();
+        self.git_commit_menu(id, keybinding_target, cx).trigger(
+            crate::render_split_button_chevron_trigger("commit-split-button-right", menu_open)
+                .disabled(disabled),
+        )
+    }
 
+    fn git_commit_menu(
+        &self,
+        id: impl Into<ElementId>,
+        keybinding_target: Option<FocusHandle>,
+        cx: &mut Context<Self>,
+    ) -> PopoverMenu<ContextMenu> {
         PopoverMenu::new(id.into())
-            .trigger(
-                crate::render_split_button_chevron_trigger("commit-split-button-right", menu_open)
-                    .disabled(disabled),
-            )
             .with_handle(self.commit_menu_handle.clone())
             .menu({
                 let git_panel = cx.entity();
@@ -6681,6 +6694,14 @@ impl GitPanel {
                 let amend = self.amend_pending();
                 let signoff = self.signoff_enabled;
                 let skip_hooks = self.skip_hooks_enabled;
+                // The islands layout hides the last-commit row, so its actions live here.
+                let can_uncommit = ui::islands_style(cx).enabled
+                    && self
+                        .active_repository
+                        .as_ref()
+                        .and_then(|repo| repo.read(cx).branch.clone())
+                        .and_then(|branch| branch.most_recent_commit)
+                        .is_some_and(|commit| commit.has_parent);
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
@@ -6724,6 +6745,20 @@ impl GitPanel {
                                         Label::new("git commit --no-verify").into_any_element()
                                     }),
                             )
+                            .when(can_uncommit, |menu| {
+                                let git_panel = git_panel.downgrade();
+                                menu.separator().entry(
+                                    "Uncommit Last Commit",
+                                    Some(Box::new(git::Uncommit)),
+                                    move |window, cx| {
+                                        git_panel
+                                            .update(cx, |git_panel, cx| {
+                                                git_panel.uncommit(window, cx)
+                                            })
+                                            .ok();
+                                    },
+                                )
+                            })
                     }))
                 }
             })
@@ -6913,7 +6948,7 @@ impl GitPanel {
         &self,
         _window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
+    ) -> Option<AnyElement> {
         if matches!(self.git_access, Some(GitAccess::No)) {
             return None;
         }
@@ -6921,6 +6956,10 @@ impl GitPanel {
         self.active_repository.as_ref()?;
 
         let diff_stat_total = self.diff_stat_total;
+
+        if ui::islands_style(cx).enabled {
+            return Some(self.render_islands_toolbar(cx).into_any_element());
+        }
 
         Some(
             h_flex()
@@ -6975,8 +7014,111 @@ impl GitPanel {
                         .gap_1()
                         .child(self.render_view_options_menu("view_options_menu"))
                         .child(self.render_git_changes_actions_button(cx)),
-                ),
+                )
+                .into_any_element(),
         )
+    }
+
+    /// IntelliJ's commit toolbar: a row of icon buttons above the changelist.
+    fn render_islands_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_entries = self.entry_count > 0;
+        let sections: Vec<Section> = self
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                GitListEntry::Header(header) => Some(header.header),
+                _ => None,
+            })
+            .collect();
+        let all_collapsed = !sections.is_empty()
+            && sections
+                .iter()
+                .all(|section| self.collapsed_sections.contains(section));
+        let focus_handle = self.focus_handle.clone();
+
+        h_flex()
+            .flex_none()
+            .h(px(30.))
+            .w_full()
+            .px_2()
+            .gap_0p5()
+            .child(
+                IconButton::new("islands-show-diff", IconName::Diff)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Show Diff",
+                        &Diff,
+                        &focus_handle,
+                    ))
+                    .on_click(|_, _, cx| {
+                        cx.defer(|cx| {
+                            cx.dispatch_action(&Diff);
+                        })
+                    }),
+            )
+            .child(
+                IconButton::new("islands-rollback", IconName::Undo)
+                    .icon_size(IconSize::Small)
+                    .disabled(!has_entries || self.selected_entry.is_none())
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Rollback",
+                        &RestoreFile::default(),
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.revert_selected(&RestoreFile::default(), window, cx)
+                    })),
+            )
+            .child(
+                IconButton::new("islands-stash", IconName::Archive)
+                    .icon_size(IconSize::Small)
+                    .disabled(!has_entries)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Stash Changes",
+                        &StashAll,
+                        &focus_handle,
+                    ))
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.stash_all(&StashAll, window, cx)),
+                    ),
+            )
+            .child(
+                div()
+                    .mx_1()
+                    .h_4()
+                    .w_px()
+                    .bg(cx.theme().colors().border_variant),
+            )
+            .child(self.render_view_options_menu("view_options_menu"))
+            .child(
+                IconButton::new(
+                    "islands-expand-collapse",
+                    if all_collapsed {
+                        IconName::ExpandVertical
+                    } else {
+                        IconName::ListCollapse
+                    },
+                )
+                .icon_size(IconSize::Small)
+                .tooltip(Tooltip::text(if all_collapsed {
+                    "Expand All"
+                } else {
+                    "Collapse All"
+                }))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    for section in &sections {
+                        let section = *section;
+                        if all_collapsed {
+                            this.collapsed_sections.remove(&section);
+                        } else {
+                            this.collapsed_sections.insert(section);
+                        }
+                    }
+                    this.update_visible_entries(window, cx);
+                })),
+            )
+            .child(div().flex_1())
+            .children(self.render_remote_button(cx))
     }
 
     pub(crate) fn render_remote_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -7211,6 +7353,158 @@ impl GitPanel {
         Some(footer)
     }
 
+    /// IntelliJ's commit area: an options row with Amend, a rounded message box,
+    /// and Commit / Commit and Push buttons.
+    fn render_islands_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        self.active_repository.as_ref()?;
+        let settings = ThemeSettings::get_global(cx);
+        let editor_style = git_commit_editor_style(settings.git_commit_buffer_font_size(cx), cx);
+        let editor_focus_handle = self.commit_editor.focus_handle(cx);
+        let editor_focused = editor_focus_handle.contains_focused(window, cx);
+        let radius = ui::islands_control_radius(cx);
+        let has_head_commit = self.head_commit(cx).is_some();
+        let amend_pending = self.amend_pending;
+        let (can_commit, tooltip) = self.configure_commit_button(cx);
+        let can_commit = can_commit && !self.modal_open;
+        let can_push = self.can_push_and_pull(cx);
+        let title = if amend_pending { "Amend" } else { "Commit" };
+        let colors = cx.theme().colors();
+        let accent = colors.border_focused;
+        let editor_background = colors.editor_background;
+        let border = colors.border;
+        let border_variant = colors.border_variant;
+        let text_color = colors.text;
+
+        let commit_button = div()
+            .id("islands-commit")
+            .px_3()
+            .py_1()
+            .rounded(radius)
+            .bg(accent)
+            .text_color(gpui::white())
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_ui_sm(cx)
+            .child(title)
+            .map(|this| {
+                if can_commit {
+                    this.cursor_pointer()
+                        .hover(|style| style.bg(accent.opacity(0.85)))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            telemetry::event!("Git Committed", source = "Git Panel");
+                            let options = this.commit_options();
+                            this.commit_changes(options, window, cx);
+                        }))
+                } else {
+                    this.opacity(0.5)
+                }
+            })
+            .tooltip(Tooltip::text(tooltip));
+
+        let commit_and_push_button = div()
+            .id("islands-commit-and-push")
+            .px_3()
+            .py(px(3.))
+            .rounded(radius)
+            .border_1()
+            .border_color(border)
+            .text_color(text_color)
+            .text_ui_sm(cx)
+            .child(format!("{title} and Push…"))
+            .map(|this| {
+                if can_commit && can_push {
+                    this.cursor_pointer()
+                        .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            telemetry::event!("Git Committed", source = "Git Panel");
+                            let options = this.commit_options();
+                            this.push_after_commit = true;
+                            this.commit_changes(options, window, cx);
+                            if this.pending_commit.is_none() {
+                                this.push_after_commit = false;
+                            }
+                        }))
+                } else {
+                    this.opacity(0.5)
+                }
+            });
+
+        let options_button = self
+            .git_commit_menu(
+                "islands-commit-options",
+                Some(editor_focus_handle.clone()),
+                cx,
+            )
+            .trigger_with_tooltip(
+                IconButton::new("islands-commit-options-trigger", IconName::Settings)
+                    .icon_size(IconSize::Small),
+                Tooltip::text("Commit Options"),
+            );
+
+        let message_box = div()
+            .id("islands-commit-message")
+            .w_full()
+            .min_h(px(96.))
+            .when(self.commit_editor_expanded, |this| this.flex_1())
+            .px_2()
+            .py_1p5()
+            .rounded(radius)
+            .bg(editor_background)
+            .border_1()
+            .border_color(if editor_focused { accent } else { border })
+            .cursor_text()
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                window.focus(&this.commit_editor.focus_handle(cx), cx);
+            }))
+            .on_action(|&zed_actions::editor::MoveUp, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_action(|&zed_actions::editor::MoveDown, _, cx| {
+                cx.stop_propagation();
+            })
+            .child(EditorElement::new(&self.commit_editor, editor_style));
+
+        Some(
+            v_flex()
+                .flex_none()
+                .when(self.commit_editor_expanded, |this| this.flex_1().min_h_0())
+                .px_2p5()
+                .pt_1p5()
+                .pb_2p5()
+                .gap_2()
+                .border_t_1()
+                .border_color(border_variant)
+                .child(
+                    h_flex()
+                        .gap_1p5()
+                        .when(has_head_commit, |this| {
+                            this.child(
+                                Checkbox::new("islands-amend", amend_pending.into())
+                                    .label("Amend")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.toggle_amend_pending(cx)),
+                                    ),
+                            )
+                        })
+                        .child(div().flex_1())
+                        .children(self.render_co_authors(cx))
+                        .children(self.render_generate_commit_message_button(cx))
+                        .child(options_button),
+                )
+                .child(message_box)
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(commit_button)
+                        .child(commit_and_push_button),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn render_commit_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (can_commit, tooltip) = self.configure_commit_button(cx);
         let title = self.commit_button_title();
@@ -7417,6 +7711,66 @@ impl GitPanel {
                         ),
                 ),
         )
+    }
+
+    /// The panel header in the islands layout: IntelliJ's "Commit" title with the
+    /// panel's tabs next to it.
+    fn render_islands_header(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let panel = cx.entity();
+        let radius = ui::islands_control_radius(cx);
+        let tab = |id: &'static str,
+                   label: &'static str,
+                   tab: GitPanelTab,
+                   cx: &mut Context<Self>| {
+            let active = self.active_tab == tab;
+            let active_bg = cx.theme().colors().ghost_element_active;
+            let hover_bg = cx.theme().colors().ghost_element_hover;
+            div()
+                .id(id)
+                .px_2()
+                .py_0p5()
+                .rounded(radius)
+                .cursor_pointer()
+                .map(|this| {
+                    if active {
+                        this.bg(active_bg)
+                    } else {
+                        this.hover(move |style| style.bg(hover_bg))
+                    }
+                })
+                .child(Label::new(label))
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.set_active_tab(tab, window, cx)),
+                )
+        };
+        let changes_tab = tab("changes-tab", "Changes", GitPanelTab::Changes, cx);
+        let history_tab = tab("history-tab", "History", GitPanelTab::History, cx);
+
+        h_flex()
+            .id("git-panel-islands-header")
+            .flex_none()
+            .h(workspace::dock::panel_header_height(cx))
+            .w_full()
+            .pl_3()
+            .pr_1p5()
+            .gap_0p5()
+            .child(
+                Label::new("Commit")
+                    .weight(gpui::FontWeight::SEMIBOLD)
+                    .mr_2(),
+            )
+            .child(changes_tab)
+            .child(history_tab)
+            .child(div().flex_1())
+            .child(workspace::dock::render_panel_header_controls_at(
+                Arc::new(panel),
+                self.position(window, cx),
+                "Commit".into(),
+            ))
     }
 
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -8511,6 +8865,92 @@ impl GitPanel {
             .copied()
             .unwrap_or_default();
 
+        let checkbox = if section_is_empty {
+            gpui::Empty.into_any_element()
+        } else {
+            let checkbox = Checkbox::new(checkbox_id, toggle_state)
+                .disabled(!has_write_access || all_conflicts_resolved)
+                .fill()
+                .elevation(ElevationIndex::Surface)
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    if !has_write_access || all_conflicts_resolved {
+                        return;
+                    }
+
+                    checkbox_weak
+                        .update(cx, |this, cx| {
+                            this.toggle_staged_for_entry(
+                                &GitListEntry::Header(GitHeaderEntry { header: section }),
+                                stage_intent,
+                                window,
+                                cx,
+                            );
+                        })
+                        .ok();
+                });
+            let tooltip_label = if all_conflicts_resolved {
+                Some("All conflicts marked as resolved")
+            } else {
+                match stage_intent {
+                    StageIntent::Stage => Some("Stage All"),
+                    StageIntent::Unstage => Some("Unstage All"),
+                    StageIntent::Toggle => None,
+                }
+            };
+            if let Some(label) = tooltip_label {
+                checkbox
+                    .tooltip(move |_window, cx| Tooltip::simple(label, cx))
+                    .into_any_element()
+            } else {
+                checkbox.into_any_element()
+            }
+        };
+        let chevron = Icon::new(if is_collapsed {
+            IconName::ChevronRight
+        } else {
+            IconName::ChevronDown
+        })
+        .size(IconSize::XSmall)
+        .color(Color::Muted);
+
+        if ui::islands_style(cx).enabled {
+            // IntelliJ's changelist header: chevron, checkbox, name, then a muted file count.
+            let title = match section {
+                Section::Tracked => "Changes",
+                Section::New => "New Files",
+                Section::Conflict => "Merge Conflicts",
+                Section::Staged | Section::Unstaged => header.title(),
+            };
+            let file_count_label = match file_count {
+                0 => None,
+                1 => Some("1 file".to_string()),
+                count => Some(format!("{count} files")),
+            };
+            return h_flex()
+                .id(id)
+                .group(group_name)
+                .h(self.list_item_height())
+                .w_full()
+                .pl_1p5()
+                .pr_1()
+                .gap_1p5()
+                .cursor_pointer()
+                .rounded(ui::islands_control_radius(cx))
+                .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                .child(chevron)
+                .child(checkbox)
+                .child(Label::new(title))
+                .children(file_count_label.map(|label| Label::new(label).color(Color::Muted)))
+                .on_click(move |_, window, cx| {
+                    weak.update(cx, |this, cx| {
+                        this.toggle_section_collapsed(section, window, cx);
+                    })
+                    .ok();
+                })
+                .into_any_element();
+        }
+
         h_flex()
             .id(id)
             .group(group_name)
@@ -8525,68 +8965,16 @@ impl GitPanel {
             .border_1()
             .border_r_2()
             .child(
-                h_flex()
-                    .flex_1()
-                    .gap_1()
-                    .child(
-                        Icon::new(if is_collapsed {
-                            IconName::ChevronRight
-                        } else {
-                            IconName::ChevronDown
-                        })
-                        .size(IconSize::XSmall)
-                        .color(Color::Muted),
-                    )
-                    .child(
-                        Label::new(header.title())
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    ),
+                h_flex().flex_1().gap_1().child(chevron).child(
+                    Label::new(header.title())
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                ),
             )
             .when(file_count > 0, |this| {
                 this.child(Chip::new(file_count.to_string()).label_color(Color::Muted))
             })
-            .child(if section_is_empty {
-                gpui::Empty.into_any_element()
-            } else {
-                let checkbox = Checkbox::new(checkbox_id, toggle_state)
-                    .disabled(!has_write_access || all_conflicts_resolved)
-                    .fill()
-                    .elevation(ElevationIndex::Surface)
-                    .on_click(move |_, window, cx| {
-                        cx.stop_propagation();
-                        if !has_write_access || all_conflicts_resolved {
-                            return;
-                        }
-
-                        checkbox_weak
-                            .update(cx, |this, cx| {
-                                this.toggle_staged_for_entry(
-                                    &GitListEntry::Header(GitHeaderEntry { header: section }),
-                                    stage_intent,
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .ok();
-                    });
-                let tooltip_label = if all_conflicts_resolved {
-                    Some("All conflicts marked as resolved")
-                } else {
-                    match stage_intent {
-                        StageIntent::Stage => Some("Stage All"),
-                        StageIntent::Unstage => Some("Unstage All"),
-                        StageIntent::Toggle => None,
-                    }
-                };
-                if let Some(label) = tooltip_label {
-                    checkbox
-                        .tooltip(move |_window, cx| Tooltip::simple(label, cx))
-                        .into_any_element()
-                } else {
-                    checkbox.into_any_element()
-                }
-            })
+            .child(checkbox)
             .on_click(move |_, window, cx| {
                 weak.update(cx, |this, cx| {
                     this.toggle_section_collapsed(section, window, cx);
@@ -9016,91 +9404,110 @@ impl GitPanel {
                 }
             });
 
-        let id_for_diff_stat = id.clone();
+        let diff_stat = GitPanelSettings::get_global(cx)
+            .diff_stats
+            .then_some(entry.diff_stat)
+            .flatten()
+            .map(|stat| {
+                ui::DiffStat::new(
+                    format!("diff-stat-{}", id),
+                    stat.added as usize,
+                    stat.deleted as usize,
+                )
+            });
+        let checkbox = div()
+            .id(checkbox_wrapper_id)
+            .flex_none()
+            .occlude()
+            .cursor_pointer()
+            .child(
+                Checkbox::new(checkbox_id, toggle_state)
+                    .fill()
+                    .elevation(ElevationIndex::Surface)
+                    .disabled(!has_write_access || resolved_conflict)
+                    .on_click_ext({
+                        let entry = entry.clone();
+                        let this = cx.weak_entity();
+                        move |_, click, window, cx| {
+                            this.update(cx, |this, cx| {
+                                if !has_write_access || resolved_conflict {
+                                    return;
+                                }
+                                if click.modifiers().shift {
+                                    this.stage_bulk(ix, stage_intent != StageIntent::Unstage, cx);
+                                } else {
+                                    let list_entry = if GitPanelSettings::get_global(cx).tree_view {
+                                        GitListEntry::TreeStatus(GitTreeStatusEntry {
+                                            entry: entry.clone(),
+                                            depth,
+                                        })
+                                    } else {
+                                        GitListEntry::Status(entry.clone())
+                                    };
+                                    this.toggle_staged_for_entry(
+                                        &list_entry,
+                                        stage_intent,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                                cx.stop_propagation();
+                            })
+                            .ok();
+                        }
+                    })
+                    .tooltip(move |_window, cx| {
+                        if resolved_conflict {
+                            Tooltip::simple("Conflict marked as resolved", cx)
+                        } else {
+                            let action = stage_intent.label(|| stage_status);
+                            Tooltip::for_action(action, &ToggleStaged, cx)
+                        }
+                    }),
+            );
+        let islands = ui::islands_style(cx).enabled;
 
         h_flex()
             .id(id)
             .h(self.list_item_height())
             .w_full()
-            .pl_2p5()
             .pr_1()
             .gap_1p5()
-            .border_1()
-            .border_r_2()
-            .when(selected && self.focus_handle.is_focused(window), |el| {
-                el.border_color(cx.theme().colors().panel_focused_border)
+            .map(|this| {
+                if islands {
+                    // IntelliJ: rounded selection, checkbox first, rows indented under their group.
+                    let selected_bg = if selected || marked {
+                        cx.theme().colors().ghost_element_selected
+                    } else {
+                        cx.theme().colors().ghost_element_background
+                    };
+                    let hover_bg = if selected || marked {
+                        cx.theme().colors().ghost_element_selected
+                    } else {
+                        cx.theme().colors().ghost_element_hover
+                    };
+                    this.pl(px(if tree_view { 22. } else { 30. }))
+                        .rounded(ui::islands_control_radius(cx))
+                        .bg(selected_bg)
+                        .hover(move |s| s.bg(hover_bg))
+                        .child(checkbox)
+                        .child(name_row)
+                        .children(diff_stat)
+                } else {
+                    this.pl_2p5()
+                        .border_1()
+                        .border_r_2()
+                        .when(selected && self.focus_handle.is_focused(window), |el| {
+                            el.border_color(cx.theme().colors().panel_focused_border)
+                        })
+                        .bg(base_bg)
+                        .hover(|s| s.bg(hover_bg))
+                        .active(|s| s.bg(active_bg))
+                        .child(name_row)
+                        .children(diff_stat)
+                        .child(checkbox)
+                }
             })
-            .bg(base_bg)
-            .hover(|s| s.bg(hover_bg))
-            .active(|s| s.bg(active_bg))
-            .child(name_row)
-            .when(GitPanelSettings::get_global(cx).diff_stats, |el| {
-                el.when_some(entry.diff_stat, move |this, stat| {
-                    let id = format!("diff-stat-{}", id_for_diff_stat);
-                    this.child(ui::DiffStat::new(
-                        id,
-                        stat.added as usize,
-                        stat.deleted as usize,
-                    ))
-                })
-            })
-            .child(
-                div()
-                    .id(checkbox_wrapper_id)
-                    .flex_none()
-                    .occlude()
-                    .cursor_pointer()
-                    .child(
-                        Checkbox::new(checkbox_id, toggle_state)
-                            .fill()
-                            .elevation(ElevationIndex::Surface)
-                            .disabled(!has_write_access || resolved_conflict)
-                            .on_click_ext({
-                                let entry = entry.clone();
-                                let this = cx.weak_entity();
-                                move |_, click, window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        if !has_write_access || resolved_conflict {
-                                            return;
-                                        }
-                                        if click.modifiers().shift {
-                                            this.stage_bulk(
-                                                ix,
-                                                stage_intent != StageIntent::Unstage,
-                                                cx,
-                                            );
-                                        } else {
-                                            let list_entry =
-                                                if GitPanelSettings::get_global(cx).tree_view {
-                                                    GitListEntry::TreeStatus(GitTreeStatusEntry {
-                                                        entry: entry.clone(),
-                                                        depth,
-                                                    })
-                                                } else {
-                                                    GitListEntry::Status(entry.clone())
-                                                };
-                                            this.toggle_staged_for_entry(
-                                                &list_entry,
-                                                stage_intent,
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                        cx.stop_propagation();
-                                    })
-                                    .ok();
-                                }
-                            })
-                            .tooltip(move |_window, cx| {
-                                if resolved_conflict {
-                                    Tooltip::simple("Conflict marked as resolved", cx)
-                                } else {
-                                    let action = stage_intent.label(|| stage_status);
-                                    Tooltip::for_action(action, &ToggleStaged, cx)
-                                }
-                            }),
-                    ),
-            )
             .on_click({
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     if event.modifiers().shift {
@@ -9701,8 +10108,14 @@ impl Render for GitPanel {
             .child(
                 v_flex()
                     .size_full()
-                    .when(!self.commit_editor_expanded, |this| {
-                        this.child(self.render_tab_bar(cx))
+                    .map(|this| {
+                        if ui::islands_style(cx).enabled {
+                            this.child(self.render_islands_header(window, cx))
+                        } else if !self.commit_editor_expanded {
+                            this.child(self.render_tab_bar(cx))
+                        } else {
+                            this
+                        }
                     })
                     .map(|this| match self.active_tab {
                         GitPanelTab::Changes => this
@@ -9723,13 +10136,20 @@ impl Render for GitPanel {
                                     }
                                 })
                             })
-                            .children(self.render_footer(window, cx))
+                            .map(|this| {
+                                if ui::islands_style(cx).enabled {
+                                    this.children(self.render_islands_footer(window, cx))
+                                } else {
+                                    this.children(self.render_footer(window, cx))
+                                }
+                            })
                             .when(self.amend_pending, |this| {
                                 this.child(self.render_pending_amend(cx))
                             })
-                            .when(!self.amend_pending, |this| {
-                                this.children(self.render_previous_commit(window, cx))
-                            }),
+                            .when(
+                                !self.amend_pending && !ui::islands_style(cx).enabled,
+                                |this| this.children(self.render_previous_commit(window, cx)),
+                            ),
                         GitPanelTab::History => this.child(self.render_history_tab(window, cx)),
                     })
                     .into_any_element(),
@@ -9825,8 +10245,16 @@ impl Panel for GitPanel {
             .then_some(ui::IconName::GitBranch)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Git Panel")
+    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<&'static str> {
+        if ui::islands_style(cx).enabled {
+            Some("Commit")
+        } else {
+            Some("Git Panel")
+        }
+    }
+
+    fn draws_own_islands_header(&self) -> bool {
+        true
     }
 
     fn icon_label(&self, _: &Window, cx: &App) -> Option<String> {

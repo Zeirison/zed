@@ -1262,11 +1262,7 @@ impl Dock {
         h_flex()
             .id("panel-header")
             .flex_none()
-            .h(if WorkspaceSettings::get_global(cx).islands.compact {
-                px(28.)
-            } else {
-                px(34.)
-            })
+            .h(panel_header_height(cx))
             .w_full()
             .pl_3()
             .pr_1p5()
@@ -1727,6 +1723,15 @@ fn panel_header_title(panel: &dyn PanelHandle, window: &Window, cx: &App) -> Str
         .unwrap_or_else(|| panel.persistent_name().to_string())
 }
 
+/// Height of a panel header row in the islands layout.
+pub fn panel_header_height(cx: &App) -> Pixels {
+    if WorkspaceSettings::get_global(cx).islands.compact {
+        px(28.)
+    } else {
+        px(34.)
+    }
+}
+
 /// The bold panel name that starts a panel header in the islands layout.
 pub fn render_panel_header_title(
     panel: &dyn PanelHandle,
@@ -1765,13 +1770,23 @@ pub fn render_panel_header_controls(
     cx: &App,
 ) -> impl IntoElement {
     let dock_position = panel.position(window, cx);
+    let title = panel_header_title(panel.as_ref(), window, cx);
+    render_panel_header_controls_at(panel, dock_position, title.into())
+}
+
+/// Like [`render_panel_header_controls`], for a panel that renders the controls
+/// itself and so cannot be read while it is being updated.
+pub fn render_panel_header_controls_at(
+    panel: Arc<dyn PanelHandle>,
+    dock_position: DockPosition,
+    title: SharedString,
+) -> impl IntoElement {
     let hide_action = match dock_position {
         DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),
         DockPosition::Bottom => crate::ToggleBottomDock.boxed_clone(),
         DockPosition::Right => crate::ToggleRightDock.boxed_clone(),
     };
-    let hide_tooltip: SharedString =
-        format!("Hide {}", panel_header_title(panel.as_ref(), window, cx)).into();
+    let hide_tooltip: SharedString = format!("Hide {title}").into();
 
     let options_menu = {
         let panel = panel.clone();

@@ -1115,11 +1115,11 @@
     //
     // Choices: label_color, icon
     // Default: icon
-    "status_style": "icon",
+    "status_style": "label_color",
     // Whether to show file icons in the git panel.
     //
     // Default: false
-    "file_icons": false,
+    "file_icons": true,
     // What to show for directories in the git panel.
     //
     // 1. A folder icon:
