@@ -19,7 +19,7 @@ use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use gpui::{
     Action, Anchor, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity,
-    EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point,
+    EntityId, EventEmitter, FocusHandle, Focusable, FontWeight, MouseButton, MouseDownEvent, Point,
     Subscription, Task, TaskExt, WeakEntity, anchored, deferred,
 };
 
@@ -44,7 +44,7 @@ use workspace::SplitDirection;
 use workspace::item::SaveOptions;
 use workspace::{
     Item, Pane, Workspace,
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, panel_header_height, render_panel_header_controls_at},
 };
 use zed_actions::debug_panel::ToggleFocus;
 
@@ -1040,6 +1040,238 @@ impl DebugPanel {
         )
     }
 
+    /// IntelliJ's Debug tool window header and toolbar, drawn instead of
+    /// [`Self::top_controls_strip`] in the islands layout.
+    fn render_islands_top(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let radius = ui::islands_control_radius(cx);
+        let focus_handle = self.focus_handle.clone();
+        let active_session = self.active_session.clone();
+        let running_state = active_session
+            .as_ref()
+            .map(|session| session.read(cx).running_state().clone());
+        let thread_status = running_state
+            .as_ref()
+            .and_then(|state| state.read(cx).thread_status(cx))
+            .unwrap_or(ThreadStatus::Exited);
+        let session_terminated = running_state
+            .as_ref()
+            .is_none_or(|state| state.read(cx).session().read(cx).is_terminated());
+        let active_background = cx.theme().colors().ghost_element_active;
+        let hover_background = cx.theme().colors().ghost_element_hover;
+
+        let sessions = self
+            .sessions_with_children
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let session_tabs = sessions
+            .into_iter()
+            .enumerate()
+            .map(|(index, session)| {
+                let active = active_session
+                    .as_ref()
+                    .is_some_and(|active| active.entity_id() == session.entity_id());
+                let label = session
+                    .update(cx, |session, cx| session.label(cx))
+                    .unwrap_or_else(|| SharedString::new_static("Session"));
+                let terminated = session.read(cx).session(cx).read(cx).is_terminated();
+                let entity_id = session.entity_id();
+                h_flex()
+                    .id(("debug-session-tab", index))
+                    .gap_0p5()
+                    .pl_2()
+                    .pr_0p5()
+                    .py_0p5()
+                    .rounded(radius)
+                    .cursor_pointer()
+                    .map(|this| {
+                        if active {
+                            this.bg(active_background)
+                        } else {
+                            this.hover(move |style| style.bg(hover_background))
+                        }
+                    })
+                    .child(Label::new(label).when(terminated, |label| label.color(Color::Muted)))
+                    .child(
+                        IconButton::new(("debug-session-close", index), IconName::Close)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Close Session"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.close_session(entity_id, window, cx);
+                            })),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if this.sessions_with_children.contains_key(&session) {
+                            this.activate_session(session.clone(), window, cx);
+                        }
+                    }))
+            })
+            .collect::<Vec<_>>();
+
+        let header = h_flex()
+            .id("debug-panel-islands-header")
+            .flex_none()
+            .h(panel_header_height(cx))
+            .w_full()
+            .pl_3()
+            .pr_1()
+            .gap_0p5()
+            .child(Label::new("Debug").weight(FontWeight::SEMIBOLD).mr_2())
+            .children(session_tabs)
+            .child(div().flex_1())
+            .child(render_panel_header_controls_at(
+                Arc::new(cx.entity()),
+                self.position(window, cx),
+                "Debug".into(),
+            ));
+
+        let control = |id: &'static str,
+                       icon: IconName,
+                       tooltip: &'static str,
+                       action: Box<dyn Action>,
+                       color: Color,
+                       enabled: bool| {
+            let tooltip_action = action.boxed_clone();
+            let focus_handle = focus_handle.clone();
+            IconButton::new(id, icon)
+                .icon_size(IconSize::Small)
+                .icon_color(if enabled { color } else { Color::Disabled })
+                .disabled(!enabled)
+                .tooltip(move |_window, cx| {
+                    Tooltip::for_action_in(tooltip, tooltip_action.as_ref(), &focus_handle, cx)
+                })
+                .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
+        };
+        let has_session = running_state.is_some();
+        let stopped = thread_status == ThreadStatus::Stopped;
+
+        let thread_dropdown = running_state.as_ref().and_then(|running_state| {
+            let threads = running_state.update(cx, |running_state, cx| {
+                let session = running_state.session();
+                session
+                    .read(cx)
+                    .is_started()
+                    .then(|| session.update(cx, |session, cx| session.threads(cx)))
+            })?;
+            self.render_thread_dropdown(running_state, threads, window, cx)
+        });
+
+        let toolbar = h_flex()
+            .id("debug-panel-islands-toolbar")
+            .flex_none()
+            .h(px(30.))
+            .w_full()
+            .px_1p5()
+            .gap_0p5()
+            .child(control(
+                "debug-islands-rerun",
+                IconName::IslandsRerun,
+                "Rerun Session",
+                RerunSession.boxed_clone(),
+                Color::Success,
+                has_session,
+            ))
+            .child(control(
+                "debug-islands-stop",
+                IconName::IslandsStop,
+                "Stop",
+                Stop.boxed_clone(),
+                Color::Error,
+                !session_terminated,
+            ))
+            .child(Divider::vertical().mx_1())
+            .child(control(
+                "debug-islands-resume",
+                IconName::IslandsResume,
+                "Resume Program",
+                Continue.boxed_clone(),
+                Color::Success,
+                stopped,
+            ))
+            .child(control(
+                "debug-islands-pause",
+                IconName::IslandsPause,
+                "Pause Program",
+                Pause.boxed_clone(),
+                Color::Default,
+                thread_status == ThreadStatus::Running,
+            ))
+            .child(Divider::vertical().mx_1())
+            .child(control(
+                "debug-islands-step-over",
+                IconName::IslandsStepOver,
+                "Step Over",
+                StepOver.boxed_clone(),
+                Color::Default,
+                stopped,
+            ))
+            .child(control(
+                "debug-islands-step-into",
+                IconName::IslandsStepInto,
+                "Step Into",
+                StepInto.boxed_clone(),
+                Color::Default,
+                stopped,
+            ))
+            .child(control(
+                "debug-islands-step-out",
+                IconName::IslandsStepOut,
+                "Step Out",
+                StepOut.boxed_clone(),
+                Color::Default,
+                stopped,
+            ))
+            .child(div().flex_1())
+            .children(thread_dropdown)
+            .child(
+                IconButton::new("debug-islands-new-session", IconName::IslandsAdd)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Start Debug Session",
+                                &crate::Start,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(crate::Start.boxed_clone(), cx)
+                    }),
+            )
+            .child(
+                IconButton::new("debug-islands-edit-debug-json", IconName::Code)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text("Edit debug.json"))
+                    .on_click(|_, window, cx| {
+                        window
+                            .dispatch_action(zed_actions::OpenProjectDebugTasks.boxed_clone(), cx);
+                    }),
+            )
+            .child(
+                IconButton::new("debug-islands-logs", IconName::Notepad)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text("Open Debug Adapter Logs"))
+                    .on_click(|_, window, cx| {
+                        window
+                            .dispatch_action(debugger_tools::OpenDebugAdapterLogs.boxed_clone(), cx)
+                    }),
+            );
+
+        v_flex()
+            .w_full()
+            .flex_none()
+            .child(header)
+            .child(toolbar)
+            .into_any_element()
+    }
+
     pub(crate) fn activate_pane_in_direction(
         &mut self,
         direction: SplitDirection,
@@ -1562,7 +1794,9 @@ impl Panel for DebugPanel {
     }
 
     fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<&'static str> {
-        if DebuggerSettings::get_global(cx).button {
+        if ui::islands_style(cx).enabled {
+            Some("Debug")
+        } else if DebuggerSettings::get_global(cx).button {
             Some("Debug Panel")
         } else {
             None
@@ -1579,6 +1813,10 @@ impl Panel for DebugPanel {
 
     fn activation_priority(&self) -> u32 {
         7
+    }
+
+    fn draws_own_islands_header(&self) -> bool {
+        true
     }
 
     fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
@@ -1616,7 +1854,13 @@ impl Render for DebugPanel {
         v_flex()
             .size_full()
             .key_context("DebugPanel")
-            .child(h_flex().children(self.top_controls_strip(window, cx)))
+            .map(|this| {
+                if ui::islands_style(cx).enabled {
+                    this.child(self.render_islands_top(window, cx))
+                } else {
+                    this.child(h_flex().children(self.top_controls_strip(window, cx)))
+                }
+            })
             .track_focus(&self.focus_handle(cx))
             .on_action({
                 let this = this.clone();

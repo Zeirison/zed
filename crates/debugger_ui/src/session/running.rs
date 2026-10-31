@@ -450,6 +450,10 @@ fn render_debugger_tab(
 ) -> impl IntoElement + use<> {
     let item_ = item.boxed_clone();
     let colors = cx.theme().colors();
+    let islands = ui::islands_style(cx).enabled;
+    let radius = ui::islands_control_radius(cx);
+    // Islands marks the active tab with a pill, so unfocused panes need no dimming.
+    let deemphasized = deemphasized && !islands;
 
     div()
         .border_l_2()
@@ -462,7 +466,14 @@ fn render_debugger_tab(
                 .p_1()
                 .rounded_sm()
                 .map(|s| {
-                    if selected {
+                    if islands {
+                        let s = s.px_2().py_0p5().rounded(radius);
+                        if selected {
+                            s.bg(colors.ghost_element_active)
+                        } else {
+                            s.hover(|s| s.bg(colors.ghost_element_hover))
+                        }
+                    } else if selected {
                         s.bg(colors.text_accent.opacity(0.08))
                             .hover(|s| s.bg(colors.text_accent.opacity(0.25)))
                             .text_color(colors.text_accent)
@@ -554,9 +565,15 @@ fn render_debugger_tab_bar(
         .pl_1p5()
         .pr_1()
         .justify_between()
-        .border_b_1()
-        .border_color(cx.theme().colors().border)
-        .bg(cx.theme().colors().tab_bar_background)
+        .map(|this| {
+            if ui::islands_style(cx).enabled {
+                this.bg(cx.theme().colors().panel_background)
+            } else {
+                this.border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().tab_bar_background)
+            }
+        })
         .child(
             h_flex()
                 .w_full()
