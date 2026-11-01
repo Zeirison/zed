@@ -97,6 +97,18 @@ use workspace::{
     item::{Item, ItemBufferKind},
 };
 
+const ISLANDS_SPLIT_WORD_OPACITY: f32 = 0.45;
+
+/// The background IntelliJ's diff viewer uses for a change of the given kind.
+pub(crate) fn islands_split_diff_color(kind: DiffHunkStatusKind, cx: &App) -> Hsla {
+    let colors = cx.theme().colors();
+    match kind {
+        DiffHunkStatusKind::Modified => colors.version_control_modified.opacity(0.18),
+        DiffHunkStatusKind::Added => colors.version_control_added.opacity(0.18),
+        DiffHunkStatusKind::Deleted => colors.version_control_deleted.opacity(0.3),
+    }
+}
+
 /// Determines what kinds of highlights should be applied to a lines background.
 #[derive(Clone, Copy, Default)]
 struct LineHighlightSpec {
@@ -4772,12 +4784,51 @@ impl EditorElement {
         }
     }
 
+    /// IntelliJ's diff viewer colors a change by its kind on both sides: blue for modified
+    /// lines, green for inserted ones and gray for deleted ones. It also records where each
+    /// change sits so the divider between the panes can connect them.
+    fn apply_islands_split_diff_colors(
+        &self,
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        highlighted_rows: &mut BTreeMap<DisplayRow, LineHighlight>,
+        cx: &mut App,
+    ) {
+        let mut bands = Vec::new();
+        for (hunk, hitbox) in display_hunks {
+            let DisplayDiffHunk::Unfolded {
+                display_row_range,
+                status,
+                ..
+            } = hunk
+            else {
+                continue;
+            };
+            let color = islands_split_diff_color(status.kind, cx);
+            for row in display_row_range.start.0..display_row_range.end.0 {
+                if let Some(highlight) = highlighted_rows.get_mut(&DisplayRow(row)) {
+                    *highlight = LineHighlight {
+                        background: solid_background(color),
+                        border: None,
+                        include_gutter: true,
+                        type_id: None,
+                    };
+                }
+            }
+            if let Some(hitbox) = hitbox {
+                bands.push((hitbox.bounds.top()..hitbox.bounds.bottom(), status.kind));
+            }
+        }
+        self.editor
+            .update(cx, |editor, _| editor.islands_split_bands = bands);
+    }
+
     fn layout_word_diff_highlights(
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         row_infos: &[RowInfo],
         start_row: DisplayRow,
         snapshot: &EditorSnapshot,
         highlighted_ranges: &mut Vec<(Range<DisplayPoint>, Hsla)>,
+        islands_split: bool,
         cx: &mut App,
     ) {
         let colors = cx.theme().colors();
@@ -4821,6 +4872,9 @@ impl EditorElement {
                 };
 
                 let background_color = match diff_status.kind {
+                    _ if islands_split => colors
+                        .version_control_modified
+                        .opacity(ISLANDS_SPLIT_WORD_OPACITY),
                     DiffHunkStatusKind::Added => colors.version_control_word_added,
                     DiffHunkStatusKind::Deleted => colors.version_control_word_deleted,
                     DiffHunkStatusKind::Modified => {
@@ -5584,6 +5638,8 @@ impl EditorElement {
                         display_row_range,
                         ..
                     } => hitbox.as_ref().map(|hunk_hitbox| {
+                        // IntelliJ colors split diff markers by change kind on both sides.
+                        let split_side = split_side.filter(|_| !islands_strip);
                         let color = match split_side {
                             Some(SplitSide::Left) => cx.theme().colors().version_control_deleted,
                             Some(SplitSide::Right) => cx.theme().colors().version_control_added,
@@ -9384,14 +9440,23 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let islands_split = self.split_side.is_some() && ui::islands_style(cx).enabled;
                     Self::layout_word_diff_highlights(
                         &display_hunks,
                         &row_infos,
                         start_row,
                         &snapshot,
                         &mut highlighted_ranges,
+                        islands_split,
                         cx,
                     );
+                    if islands_split {
+                        self.apply_islands_split_diff_colors(
+                            &display_hunks,
+                            &mut highlighted_rows,
+                            cx,
+                        );
+                    }
 
                     let bg_segments_per_row = Self::bg_segments_per_row(
                         start_row..end_row,

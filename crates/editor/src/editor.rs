@@ -1174,6 +1174,9 @@ pub struct Editor {
     gutter_hover_button: (Option<GutterHoverButton>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
     pub(crate) diff_review_drag_state: Option<DiffReviewDragState>,
+    /// Window-space vertical extents of the visible diff hunks, recorded during prepaint so
+    /// that the islands split diff divider can draw IntelliJ's connector bands between panes.
+    pub(crate) islands_split_bands: Vec<(Range<Pixels>, buffer_diff::DiffHunkStatusKind)>,
     /// Active diff review overlays. Multiple overlays can be open simultaneously
     /// when hunks have comments stored.
     pub(crate) diff_review_overlays: Vec<DiffReviewOverlay>,
@@ -2551,6 +2554,7 @@ impl Editor {
             gutter_hover_button: (None, None),
             gutter_diff_review_indicator: (None, None),
             diff_review_drag_state: None,
+            islands_split_bands: Vec::new(),
             diff_review_overlays: Vec::new(),
             stored_review_comments: Vec::new(),
             next_review_comment_id: 0,

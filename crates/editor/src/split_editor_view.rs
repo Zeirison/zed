@@ -25,6 +25,56 @@ use crate::{
 };
 
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
+const ISLANDS_DIVIDER_WIDTH: f32 = 24.0;
+
+/// IntelliJ's diff divider: each change is joined across the gap between the panes by a band
+/// in its color. Both sides are aligned row by row, so a band spans the union of where the
+/// change sits on either side.
+fn paint_islands_connector_bands(
+    bounds: Bounds<Pixels>,
+    lhs_editor: &Entity<Editor>,
+    rhs_editor: &Entity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let mut bands = lhs_editor
+        .read(cx)
+        .islands_split_bands
+        .iter()
+        .chain(rhs_editor.read(cx).islands_split_bands.iter())
+        .cloned()
+        .collect::<Vec<_>>();
+    bands.sort_by(|left, right| {
+        (left.1 as u8, left.0.start)
+            .partial_cmp(&(right.1 as u8, right.0.start))
+            .unwrap_or(cmp::Ordering::Equal)
+    });
+
+    let mut merged: Vec<(std::ops::Range<Pixels>, buffer_diff::DiffHunkStatusKind)> = Vec::new();
+    for (range, kind) in bands {
+        match merged.last_mut() {
+            Some((last_range, last_kind))
+                if *last_kind == kind && range.start <= last_range.end =>
+            {
+                last_range.end = last_range.end.max(range.end);
+            }
+            _ => merged.push((range, kind)),
+        }
+    }
+
+    window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        for (range, kind) in merged {
+            let band = Bounds::from_corners(
+                point(bounds.left(), range.start),
+                point(bounds.right(), range.end.max(range.start + px(2.))),
+            );
+            window.paint_quad(gpui::fill(
+                band,
+                crate::element::islands_split_diff_color(kind, cx),
+            ));
+        }
+    });
+}
 
 #[derive(Debug, Clone)]
 struct DraggedSplitHandle;
@@ -108,18 +158,38 @@ impl SplitEditorView {
 fn render_resize_handle(
     state: &Entity<SplitEditorState>,
     separator_color: Hsla,
+    islands_editors: Option<(Entity<Editor>, Entity<Editor>)>,
     _window: &mut Window,
-    _cx: &mut App,
+    cx: &mut App,
 ) -> AnyElement {
     let state_for_click = state.clone();
+    let islands = islands_editors.is_some();
+    let divider_background = cx.theme().colors().editor_background;
 
     div()
         .id("split-resize-container")
         .relative()
         .h_full()
         .flex_shrink_0()
-        .w(px(1.))
-        .bg(separator_color)
+        .map(|this| {
+            if islands {
+                this.w(px(ISLANDS_DIVIDER_WIDTH)).bg(divider_background)
+            } else {
+                this.w(px(1.)).bg(separator_color)
+            }
+        })
+        .when_some(islands_editors, |this, (lhs_editor, rhs_editor)| {
+            this.child(
+                gpui::canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, cx| {
+                        paint_islands_connector_bands(bounds, &lhs_editor, &rhs_editor, window, cx)
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
+        })
         .child(
             div()
                 .id("split-resize-handle")
@@ -165,7 +235,16 @@ impl RenderOnce for SplitEditorView {
 
         let separator_color = cx.theme().colors().border_variant;
 
-        let resize_handle = render_resize_handle(&self.split_state, separator_color, window, cx);
+        let islands_editors = ui::islands_style(cx)
+            .enabled
+            .then(|| (lhs_editor.clone(), rhs_editor.clone()));
+        let resize_handle = render_resize_handle(
+            &self.split_state,
+            separator_color,
+            islands_editors,
+            window,
+            cx,
+        );
 
         let state_for_drag = self.split_state.downgrade();
         let state_for_drop = self.split_state.downgrade();
