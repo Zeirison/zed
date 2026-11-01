@@ -146,3 +146,48 @@ pub fn islands_symbol_badge(kind: IslandsSymbolKind, cx: &App) -> Div {
         .text_color(foreground)
         .child(kind.letter())
 }
+
+/// The outlined track of an IntelliJ-style segmented control. Put
+/// [`islands_segment`]s inside it.
+pub fn islands_segmented_track(cx: &App) -> Div {
+    let radius = islands_control_radius(cx);
+    h_flex()
+        .p_0p5()
+        .gap_0p5()
+        .rounded(radius + px(2.))
+        .border_1()
+        // Theme borders match popover backgrounds in the islands themes, so derive
+        // the outline from the text color to keep it visible in both appearances.
+        .border_color(cx.theme().colors().text.opacity(0.2))
+}
+
+/// One segment of an [`islands_segmented_track`]: the selected segment is filled,
+/// the others highlight on hover.
+pub fn islands_segment(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+    selected: bool,
+    cx: &App,
+) -> gpui::Stateful<Div> {
+    let colors = cx.theme().colors();
+    let selected_background = colors.text.opacity(0.14);
+    let hover_background = colors.ghost_element_hover;
+    div()
+        .id(id)
+        .px_2()
+        .py_px()
+        .rounded(islands_control_radius(cx))
+        .cursor_pointer()
+        .map(|this| {
+            if selected {
+                this.bg(selected_background)
+            } else {
+                this.hover(move |style| style.bg(hover_background))
+            }
+        })
+        .child(Label::new(label).color(if selected {
+            Color::Default
+        } else {
+            Color::Muted
+        }))
+}

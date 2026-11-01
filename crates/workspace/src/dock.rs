@@ -1505,6 +1505,9 @@ impl Render for PanelButtons {
             .iter()
             .enumerate()
             .filter_map(|(i, entry)| {
+                if !entry.panel.enabled(cx) {
+                    return None;
+                }
                 let icon = entry.panel.icon(window, cx)?;
                 let icon = if in_stripe {
                     tool_window_stripe_icon(icon)
