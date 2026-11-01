@@ -32,7 +32,8 @@ impl LineEndingIndicator {
 
 impl Render for LineEndingIndicator {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !StatusBarSettings::get_global(cx).line_endings_button {
+        if !StatusBarSettings::get_global(cx).line_endings_button && !ui::islands_style(cx).enabled
+        {
             return div();
         }
 

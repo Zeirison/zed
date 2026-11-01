@@ -66,7 +66,8 @@ impl Render for ActiveBufferEncoding {
 
         let display_option = StatusBarSettings::get_global(cx).active_encoding_button;
         let is_utf8 = active_encoding == UTF_8;
-        if !display_option.should_show(is_utf8, self.has_bom) {
+        // IntelliJ always shows the encoding, UTF-8 included.
+        if !display_option.should_show(is_utf8, self.has_bom) && !ui::islands_style(cx).enabled {
             return div().hidden();
         }
 

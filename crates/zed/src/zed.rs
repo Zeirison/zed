@@ -632,6 +632,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         let line_ending_indicator =
             cx.new(|_| line_ending_selector::LineEndingIndicator::default());
+        let indent_indicator = cx.new(|_| line_ending_selector::IndentIndicator::default());
+        let islands = ui::islands_style(cx).enabled;
         let git_blame_status = cx.new(|_| git_ui::GitBlameStatus::default());
         let merge_conflict_indicator =
             cx.new(|cx| git_ui::MergeConflictIndicator::new(workspace, cx));
@@ -644,10 +646,20 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             status_bar.add_left_item(merge_conflict_indicator, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_ui, window, cx);
-            status_bar.add_right_item(active_buffer_encoding, window, cx);
-            status_bar.add_right_item(active_buffer_language, window, cx);
-            status_bar.add_right_item(active_toolchain_language, window, cx);
-            status_bar.add_right_item(line_ending_indicator, window, cx);
+            if islands {
+                // IntelliJ's order, left to right: position, line ending, encoding, indent.
+                status_bar.add_right_item(active_toolchain_language, window, cx);
+                status_bar.add_right_item(active_buffer_language, window, cx);
+                status_bar.add_right_item(indent_indicator, window, cx);
+                status_bar.add_right_item(active_buffer_encoding, window, cx);
+                status_bar.add_right_item(line_ending_indicator, window, cx);
+            } else {
+                status_bar.add_right_item(active_buffer_encoding, window, cx);
+                status_bar.add_right_item(active_buffer_language, window, cx);
+                status_bar.add_right_item(active_toolchain_language, window, cx);
+                status_bar.add_right_item(line_ending_indicator, window, cx);
+                status_bar.add_right_item(indent_indicator, window, cx);
+            }
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
             // Keep these last so they stay leftmost and can change without moving the other items.

@@ -369,7 +369,7 @@ impl Render for TitleBar {
                 .gap_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .when(ui::islands_style(cx).enabled, |this| {
-                    this.child(render_run_widget())
+                    this.child(render_run_widget(self.workspace.clone(), &self.project, cx))
                 })
                 .child(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
@@ -1484,13 +1484,38 @@ fn islands_widget_trigger(
 /// name, like the project widget in JetBrains IDEs.
 /// The run widget of the JetBrains main toolbar, mapped onto Zed tasks and
 /// the debugger.
-fn render_run_widget() -> impl IntoElement {
+fn render_run_widget(
+    workspace: WeakEntity<Workspace>,
+    project: &Entity<Project>,
+    cx: &App,
+) -> impl IntoElement {
+    // Like IntelliJ, the widget names the configuration that ran last.
+    let label: SharedString = project
+        .read(cx)
+        .task_store()
+        .read(cx)
+        .task_inventory()
+        .and_then(|inventory| inventory.read(cx).last_scheduled_task(None))
+        .map(|(_, task)| task.resolved_label.into())
+        .unwrap_or_else(|| "Run Task".into());
     h_flex()
         .gap_0p5()
         .child(
-            islands_widget_trigger("run_task_picker", None, "Run Task").on_click(
-                |_, window, cx| window.dispatch_action(Box::new(zed_actions::Spawn::modal()), cx),
-            ),
+            PopoverMenu::new("run_task_popover")
+                .menu(move |window, cx| {
+                    let workspace = workspace.clone();
+                    Some(
+                        cx.new(|cx| {
+                            tasks_ui::run_widget::RunWidgetMenu::new(workspace, window, cx)
+                        }),
+                    )
+                })
+                .trigger(islands_widget_trigger("run_task_picker", None, label))
+                .anchor(Anchor::TopRight)
+                .offset(gpui::Point {
+                    x: px(0.),
+                    y: px(4.),
+                }),
         )
         .child(
             IconButton::new("rerun_task", IconName::PlayFilled)

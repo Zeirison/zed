@@ -18357,6 +18357,7 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
+ "tasks_ui",
  "telemetry",
  "theme",
  "theme_settings",

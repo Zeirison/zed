@@ -48,6 +48,7 @@ icons.workspace = true
 livekit_client.workspace = true
 path.workspace = true
 project.workspace = true
+tasks_ui.workspace = true
 recent_projects.workspace = true
 remote.workspace = true
 remote_connection.workspace = true

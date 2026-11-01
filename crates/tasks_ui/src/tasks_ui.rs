@@ -13,6 +13,7 @@ use tree_sitter::{Query, StreamingIterator as _};
 use workspace::Workspace;
 
 mod modal;
+pub mod run_widget;
 
 pub use modal::{Rerun, ShowAttachModal, Spawn, TaskOverrides, TasksModal};
 
