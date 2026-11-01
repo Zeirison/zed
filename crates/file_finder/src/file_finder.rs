@@ -69,6 +69,8 @@ pub struct FileFinder {
     init_modifiers: Option<Modifiers>,
 }
 
+pub mod recent_files;
+
 pub fn init(cx: &mut App) {
     workspace::search_everywhere::register_search_everywhere_tab(
         workspace::search_everywhere::SearchEverywhereTab::Files,
@@ -79,6 +81,7 @@ pub fn init(cx: &mut App) {
         cx,
     );
     cx.observe_new(FileFinder::register).detach();
+    recent_files::init(cx);
     cx.observe_new(OpenPathPrompt::register).detach();
     cx.observe_new(OpenPathPrompt::register_new_path).detach();
 }

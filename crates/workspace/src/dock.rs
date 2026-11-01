@@ -953,6 +953,10 @@ impl Dock {
         }
     }
 
+    pub fn panels(&self) -> impl Iterator<Item = &Arc<dyn PanelHandle>> {
+        self.panel_entries.iter().map(|entry| &entry.panel)
+    }
+
     pub fn panels_len(&self) -> usize {
         self.panel_entries.len()
     }

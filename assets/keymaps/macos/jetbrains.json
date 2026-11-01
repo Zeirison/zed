@@ -74,7 +74,7 @@
       "cmd-f12": "outline::Toggle",
       "cmd-r": ["buffer_search::Deploy", { "replace_enabled": true }],
       "cmd-l": "go_to_line::Toggle",
-      "cmd-e": "file_finder::Toggle",
+      "cmd-e": "recent_files::Toggle",
       "cmd-shift-o": "file_finder::Toggle",
       "cmd-shift-n": "file_finder::Toggle",
       "alt-enter": "editor::ToggleCodeActions",
@@ -125,7 +125,7 @@
       "ctrl-alt-r": "task::Spawn",
       "shift-f10": "task::Spawn",
       "cmd-f5": "task::Rerun",
-      "cmd-e": "file_finder::Toggle",
+      "cmd-e": "recent_files::Toggle",
       "cmd-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
       "cmd-shift-o": "file_finder::Toggle",
       "cmd-shift-n": "file_finder::Toggle",
@@ -139,6 +139,7 @@
       "cmd-5": "debug_panel::ToggleFocus",
       "cmd-6": "problems_panel::ToggleFocus",
       "cmd-7": "outline_panel::ToggleFocus",
+      "cmd-9": "git_log_panel::ToggleFocus",
     },
   },
   {
@@ -152,7 +153,7 @@
       "cmd-6": "problems_panel::ToggleFocus",
       "cmd-7": "outline_panel::ToggleFocus",
       "cmd-8": null, // Services (bottom dock)
-      "cmd-9": null, // Git History (bottom dock)
+      "cmd-9": "git_log_panel::ToggleFocus",
       "cmd-0": "git_panel::ToggleFocus",
     },
   },

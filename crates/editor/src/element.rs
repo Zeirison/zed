@@ -4834,6 +4834,141 @@ impl EditorElement {
         }
     }
 
+    /// IntelliJ's problems widget in the editor's top right corner: error and warning counts
+    /// for the file, plus buttons that step through them.
+    fn layout_islands_problems_widget(
+        &self,
+        text_hitbox: &Hitbox,
+        right_margin: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        if !ui::islands_style(cx).enabled {
+            return None;
+        }
+        let editor = self.editor.read(cx);
+        if !editor.mode.is_full() || editor.buffer_kind(cx) != ItemBufferKind::Singleton {
+            return None;
+        }
+        let project = editor.project.clone()?;
+        let buffer = editor.buffer().read(cx).as_singleton()?;
+        let file = buffer.read(cx).file()?;
+        let project_path = project::ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        };
+        let summary = project
+            .read(cx)
+            .diagnostic_summary_for_path(&project_path, cx);
+
+        let colors = cx.theme().colors();
+        let background = colors.editor_background;
+        let hover_background = colors.ghost_element_hover;
+        let radius = ui::islands_control_radius(cx);
+        let counter = |id: &'static str, icon: IconName, color: Color, count: usize| {
+            h_flex()
+                .id(id)
+                .h_5()
+                .px_1()
+                .gap_0p5()
+                .rounded(radius)
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover_background))
+                .child(Icon::new(icon).size(IconSize::Small).color(color))
+                .child(Label::new(count.to_string()).size(LabelSize::Small))
+                .on_click(|_, window, cx| {
+                    if let Some(action) = cx
+                        .build_action("problems_panel::ToggleFocus", None)
+                        .log_err()
+                    {
+                        window.dispatch_action(action, cx);
+                    }
+                })
+        };
+        let has_problems = summary.error_count > 0 || summary.warning_count > 0;
+        let navigation_button = |id: &'static str, icon: IconName, next: bool| {
+            let editor = self.editor.clone();
+            h_flex()
+                .id(id)
+                .size_5()
+                .justify_center()
+                .rounded(radius)
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover_background))
+                .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
+                .on_click(move |_, window, cx| {
+                    editor.update(cx, |editor, cx| {
+                        if next {
+                            editor.go_to_diagnostic(
+                                &crate::actions::GoToDiagnostic::default(),
+                                window,
+                                cx,
+                            );
+                        } else {
+                            editor.go_to_prev_diagnostic(
+                                &crate::actions::GoToPreviousDiagnostic::default(),
+                                window,
+                                cx,
+                            );
+                        }
+                    });
+                })
+        };
+
+        let mut element = h_flex()
+            .id("islands-problems-widget")
+            .occlude()
+            .gap_0p5()
+            .p_0p5()
+            .rounded(radius)
+            .bg(background)
+            .when(summary.error_count > 0, |this| {
+                this.child(counter(
+                    "islands-problems-errors",
+                    IconName::XCircle,
+                    Color::Error,
+                    summary.error_count,
+                ))
+            })
+            .when(summary.warning_count > 0, |this| {
+                this.child(counter(
+                    "islands-problems-warnings",
+                    IconName::Warning,
+                    Color::Warning,
+                    summary.warning_count,
+                ))
+            })
+            .when(has_problems, |this| {
+                this.child(navigation_button(
+                    "islands-problems-previous",
+                    IconName::ChevronUp,
+                    false,
+                ))
+                .child(navigation_button(
+                    "islands-problems-next",
+                    IconName::ChevronDown,
+                    true,
+                ))
+            })
+            .when(!has_problems, |this| {
+                this.child(
+                    h_flex().size_5().justify_center().child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    ),
+                )
+            })
+            .into_any_element();
+        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+        let origin = point(
+            text_hitbox.bounds.right() - right_margin - size.width - px(8.),
+            text_hitbox.bounds.top() + px(4.),
+        );
+        element.prepaint_as_root(origin, AvailableSpace::min_size(), window, cx);
+        Some(element)
+    }
+
     fn layout_diff_hunk_controls(
         &self,
         row_range: Range<DisplayRow>,
@@ -6036,6 +6171,9 @@ impl EditorElement {
                 self.paint_inline_blame(layout, window, cx);
                 self.paint_inline_code_actions(layout, window, cx);
                 self.paint_diff_hunk_controls(layout, window, cx);
+                if let Some(widget) = layout.islands_problems_widget.as_mut() {
+                    widget.paint(window, cx);
+                }
                 window.with_element_namespace("crease_trailers", |window| {
                     for trailer in layout.crease_trailers.iter_mut().flatten() {
                         trailer.element.paint(window, cx);
@@ -10106,6 +10244,9 @@ impl Element for EditorElement {
                             )
                         };
 
+                    let islands_problems_widget =
+                        self.layout_islands_problems_widget(&text_hitbox, right_margin, window, cx);
+
                     self.populate_point_diagnostics(
                         &snapshot,
                         start_row..end_row,
@@ -10180,6 +10321,7 @@ impl Element for EditorElement {
                         selections,
                         edit_prediction_popover,
                         diff_hunk_controls,
+                        islands_problems_widget,
                         mouse_context_menu,
                         test_indicators,
                         bookmarks,
@@ -10406,6 +10548,7 @@ pub struct EditorLayout {
     crease_toggles: Vec<Option<AnyElement>>,
     expand_toggles: Vec<Option<(AnyElement, gpui::Point<Pixels>)>>,
     diff_hunk_controls: Vec<AnyElement>,
+    islands_problems_widget: Option<AnyElement>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     edit_prediction_popover: Option<AnyElement>,
     mouse_context_menu: Option<AnyElement>,
