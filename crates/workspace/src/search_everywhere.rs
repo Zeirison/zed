@@ -162,41 +162,6 @@ pub fn render_search_everywhere_tabs(
     cx: &App,
 ) -> AnyElement {
     let tabs = registered_tabs(cx);
-    if ui::islands_style(cx).enabled {
-        return h_flex()
-            .w_full()
-            .px_2()
-            .pt_2()
-            .pb_1()
-            .child(
-                ui::islands_segmented_track(cx).children(tabs.into_iter().map(|tab| {
-                    let query = query.clone();
-                    ui::islands_segment(
-                        SharedString::from(tab.label()),
-                        tab.label(),
-                        tab == active_tab,
-                        cx,
-                    )
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(
-                            OpenTab {
-                                tab,
-                                query: query.clone(),
-                            }
-                            .boxed_clone(),
-                            cx,
-                        )
-                    })
-                })),
-            )
-            .child(div().flex_grow_1())
-            .child(
-                Label::new("Tab to switch")
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted),
-            )
-            .into_any_element();
-    }
     h_flex()
         .w_full()
         .px_2()

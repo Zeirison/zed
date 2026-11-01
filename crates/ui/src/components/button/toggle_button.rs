@@ -279,12 +279,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
     for ToggleButtonGroup<T, COLS, ROWS>
 {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        if crate::islands_style(cx).enabled
-            && ROWS == 1
-            && self.style != ToggleButtonGroupStyle::Transparent
-        {
-            return self.render_islands(cx).into_any_element();
-        }
         let custom_height = match self.size {
             ToggleButtonGroupSize::Custom(height) => Some(height),
             _ => None,
@@ -362,7 +356,12 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                 })
             });
 
-        let border_color = cx.theme().colors().border.opacity(0.6);
+        // The Islands Dark border color is too close to the panel background to outline the group.
+        let border_color = if crate::islands_style(cx).enabled {
+            cx.theme().colors().text.opacity(0.2)
+        } else {
+            cx.theme().colors().border.opacity(0.6)
+        };
         let is_outlined_or_filled = self.style == ToggleButtonGroupStyle::Outlined
             || self.style == ToggleButtonGroupStyle::Filled;
         let is_transparent = self.style == ToggleButtonGroupStyle::Transparent;
@@ -404,54 +403,6 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                             .child(item)
                     }))
             }))
-            .into_any_element()
-    }
-}
-
-impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T, COLS, ROWS> {
-    /// IntelliJ's segmented control: an outlined track with a filled selected segment.
-    fn render_islands(self, cx: &mut App) -> impl IntoElement {
-        let group_name = self.group_name.clone();
-        let selected_index = self.selected_index;
-        let full_width = !self.auto_width;
-        let group_width = self.group_width;
-        crate::islands_segmented_track(cx)
-            .flex_none()
-            .when(full_width, |this| this.w_full())
-            .when_some(group_width, |this, width| this.w(width))
-            .children(
-                self.rows
-                    .into_iter()
-                    .flatten()
-                    .enumerate()
-                    .map(|(index, button)| {
-                        let ButtonConfiguration {
-                            label,
-                            icon,
-                            on_click,
-                            selected,
-                            tooltip,
-                        } = button.into_configuration();
-                        let is_selected = index == selected_index || selected;
-                        crate::islands_segment((group_name.clone(), index), label, is_selected, cx)
-                            .when(full_width, |this| this.flex_1().flex().justify_center())
-                            .when_some(icon, |this, icon| {
-                                this.flex().items_center().gap_1().child(
-                                    Icon::new(icon)
-                                        .size(IconSize::XSmall)
-                                        .color(if is_selected {
-                                            Color::Default
-                                        } else {
-                                            Color::Muted
-                                        }),
-                                )
-                            })
-                            .when_some(tooltip, |this, tooltip| {
-                                this.tooltip(move |window, cx| tooltip(window, cx))
-                            })
-                            .on_click(on_click)
-                    }),
-            )
     }
 }
 
