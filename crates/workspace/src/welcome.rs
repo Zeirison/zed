@@ -10,13 +10,14 @@ use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     InteractiveElement, ParentElement, Render, Styled, Task, TaskExt, Window, actions,
 };
-use gpui::{WeakEntity, linear_color_stop, linear_gradient};
+use gpui::{Subscription, WeakEntity, linear_color_stop, linear_gradient};
 use menu::{SelectNext, SelectPrevious};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{DefaultOpenBehavior, Settings};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
+use ui_input::InputField;
 use util::{ResultExt, paths::PathExt as _};
 use zed_actions::{
     Extensions, OpenKeymap, OpenOnboarding, OpenSettings, assistant::ToggleFocus, command_palette,
@@ -245,6 +246,8 @@ pub struct WelcomePage {
     focus_handle: FocusHandle,
     fallback_to_recent_projects: bool,
     recent_workspaces: Option<Vec<RecentWorkspace>>,
+    project_search: Option<Entity<InputField>>,
+    _project_search_subscription: Option<Subscription>,
 }
 
 impl WelcomePage {
@@ -281,11 +284,31 @@ impl WelcomePage {
             .detach();
         }
 
+        let (project_search, project_search_subscription) = if ui::islands_style(cx).enabled {
+            let search = cx.new(|cx| {
+                InputField::new(window, cx, "Search projects").start_icon(IconName::MagnifyingGlass)
+            });
+            let this = cx.entity().downgrade();
+            let search_editor = search.read(cx).editor().clone();
+            let subscription = search_editor.subscribe(
+                Box::new(move |_, _, cx| {
+                    this.update(cx, |_, cx| cx.notify()).ok();
+                }),
+                window,
+                cx,
+            );
+            (Some(search), Some(subscription))
+        } else {
+            (None, None)
+        };
+
         WelcomePage {
             workspace,
             focus_handle,
             fallback_to_recent_projects,
             recent_workspaces: None,
+            project_search,
+            _project_search_subscription: project_search_subscription,
         }
     }
 
@@ -559,6 +582,11 @@ impl WelcomePage {
             ));
 
         let recent_workspaces = self.recent_workspaces.clone().unwrap_or_default();
+        let query = self
+            .project_search
+            .as_ref()
+            .map(|search| search.read(cx).text(cx).trim().to_lowercase())
+            .unwrap_or_default();
         let content = if recent_workspaces.is_empty() {
             v_flex()
                 .size_full()
@@ -580,9 +608,8 @@ impl WelcomePage {
         } else {
             let rows = recent_workspaces
                 .iter()
-                .take(20)
                 .enumerate()
-                .map(|(index, workspace)| {
+                .filter_map(|(index, workspace)| {
                     let name = project_name(&workspace.identity_paths);
                     let location = workspace
                         .identity_paths
@@ -591,6 +618,13 @@ impl WelcomePage {
                         .map(|path| path.compact().to_string_lossy().to_string())
                         .collect::<Vec<_>>()
                         .join(", ");
+                    let matches_query = query.is_empty()
+                        || name.to_lowercase().contains(&query)
+                        || location.to_lowercase().contains(&query);
+                    matches_query.then_some((index, workspace, name, location))
+                })
+                .take(20)
+                .map(|(index, workspace, name, location)| {
                     let is_remote =
                         matches!(workspace.location, SerializedWorkspaceLocation::Remote(_));
                     let focus_handle = self.focus_handle.clone();
@@ -646,8 +680,15 @@ impl WelcomePage {
                 .child(
                     h_flex()
                         .w_full()
+                        .gap_4()
                         .justify_between()
-                        .child(Headline::new("Projects").size(HeadlineSize::Small))
+                        .map(|this| match self.project_search.clone() {
+                            // Like IntelliJ, the search field takes the place of a heading.
+                            Some(search) => {
+                                this.child(div().flex_1().max_w(px(360.)).child(search))
+                            }
+                            None => this.child(Headline::new("Projects").size(HeadlineSize::Small)),
+                        })
                         .child(actions_row),
                 )
                 .child(
@@ -656,6 +697,13 @@ impl WelcomePage {
                         .flex_1()
                         .overflow_y_scroll()
                         .gap_0p5()
+                        .when(rows.is_empty(), |this| {
+                            this.child(
+                                Label::new("No projects match your search")
+                                    .color(Color::Muted)
+                                    .mx_2(),
+                            )
+                        })
                         .children(rows),
                 )
                 .into_any_element()

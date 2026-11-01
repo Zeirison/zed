@@ -1670,7 +1670,11 @@ async fn register_session_inner(
     .ok();
     let serialized_layout = this
         .update(cx, |_, cx| {
-            persistence::get_serialized_layout(&adapter_name, &db::kvp::KeyValueStore::global(cx))
+            persistence::get_serialized_layout(
+                &adapter_name,
+                &db::kvp::KeyValueStore::global(cx),
+                cx,
+            )
         })
         .ok()
         .flatten();

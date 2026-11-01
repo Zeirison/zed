@@ -148,6 +148,56 @@ impl Render for RunningState {
     }
 }
 
+/// IntelliJ's "Threads & Variables" debugger tab: the call stack beside the variables of the
+/// selected frame.
+pub(crate) struct ThreadsAndVariables {
+    stack_frame_list: Entity<StackFrameList>,
+    variable_list: Entity<VariableList>,
+}
+
+impl ThreadsAndVariables {
+    pub(crate) fn new(
+        stack_frame_list: Entity<StackFrameList>,
+        variable_list: Entity<VariableList>,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|_| Self {
+            stack_frame_list,
+            variable_list,
+        })
+    }
+}
+
+impl Focusable for ThreadsAndVariables {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.variable_list.focus_handle(cx)
+    }
+}
+
+impl Render for ThreadsAndVariables {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let border_color = cx.theme().colors().border_variant;
+        h_flex()
+            .size_full()
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(320.))
+                    .h_full()
+                    .border_r_1()
+                    .border_color(border_color)
+                    .child(self.stack_frame_list.clone()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .child(self.variable_list.clone()),
+            )
+    }
+}
+
 pub(crate) struct SubView {
     inner: AnyView,
     item_focus_handle: FocusHandle,
@@ -205,6 +255,24 @@ impl SubView {
         });
 
         this
+    }
+
+    pub(crate) fn threads_and_variables(
+        stack_frame_list: Entity<StackFrameList>,
+        variable_list: Entity<VariableList>,
+        running_state: WeakEntity<RunningState>,
+        host_pane: WeakEntity<Pane>,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let view = ThreadsAndVariables::new(stack_frame_list, variable_list, cx);
+        Self::new(
+            view.focus_handle(cx),
+            view.into(),
+            DebuggerPaneItem::ThreadsAndVariables,
+            running_state,
+            host_pane,
+            cx,
+        )
     }
 
     pub(crate) fn console(
@@ -1510,6 +1578,13 @@ impl RunningState {
                 host_pane,
                 cx,
             )),
+            DebuggerPaneItem::ThreadsAndVariables => Box::new(SubView::threads_and_variables(
+                self.stack_frame_list.clone(),
+                self.variable_list.clone(),
+                running_state,
+                host_pane,
+                cx,
+            )),
         }
     }
 
@@ -1602,7 +1677,7 @@ impl RunningState {
                     .read_with(cx, |this, cx| {
                         let adapter_name = this.session.read(cx).adapter();
                         (
-                            adapter_name,
+                            persistence::layout_key(adapter_name.as_ref(), cx),
                             persistence::build_serialized_layout(
                                 &this.panes.root,
                                 this.dock_axis,
@@ -1732,6 +1807,18 @@ impl RunningState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Frames and variables already show in the combined tab, so focus that one.
+        let has_threads_and_variables = self.panes.panes().into_iter().any(|pane| {
+            pane.read(cx)
+                .items_of_type::<SubView>()
+                .any(|view| view.read(cx).view_kind() == DebuggerPaneItem::ThreadsAndVariables)
+        });
+        let item = match item {
+            DebuggerPaneItem::Frames | DebuggerPaneItem::Variables if has_threads_and_variables => {
+                DebuggerPaneItem::ThreadsAndVariables
+            }
+            item => item,
+        };
         self.ensure_pane_item(item, window, cx);
 
         let (variable_list_position, pane) = self
@@ -2000,6 +2087,54 @@ impl RunningState {
         cx: &mut Context<'_, RunningState>,
     ) -> Member {
         let running_state = cx.weak_entity();
+
+        if ui::islands_style(cx).enabled {
+            // IntelliJ shows one row of debugger tabs, led by "Threads & Variables".
+            let pane = new_debugger_pane(workspace.clone(), project, window, cx);
+            let pane_handle = pane.downgrade();
+            let threads_and_variables = SubView::threads_and_variables(
+                stack_frame_list.clone(),
+                variable_list.clone(),
+                running_state.clone(),
+                pane_handle.clone(),
+                cx,
+            );
+            let console = SubView::console(
+                console.clone(),
+                running_state.clone(),
+                pane_handle.clone(),
+                cx,
+            );
+            let terminal = SubView::new(
+                debug_terminal.focus_handle(cx),
+                debug_terminal.clone().into(),
+                DebuggerPaneItem::Terminal,
+                running_state.clone(),
+                pane_handle.clone(),
+                cx,
+            );
+            let breakpoints =
+                SubView::breakpoint_list(breakpoints.clone(), running_state, pane_handle, cx);
+            pane.update(cx, |this, cx| {
+                this.add_item(
+                    Box::new(threads_and_variables),
+                    true,
+                    false,
+                    None,
+                    window,
+                    cx,
+                );
+                this.add_item(Box::new(console), true, false, None, window, cx);
+                this.add_item(Box::new(terminal), false, false, None, window, cx);
+                this.add_item(Box::new(breakpoints), false, false, None, window, cx);
+                this.activate_item(0, false, false, window, cx);
+            });
+            subscriptions.insert(
+                pane.entity_id(),
+                cx.subscribe_in(&pane, window, Self::handle_pane_event),
+            );
+            return Member::Pane(pane);
+        }
 
         let leftmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         let leftmost_pane_handle = leftmost_pane.downgrade();

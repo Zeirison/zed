@@ -49,6 +49,7 @@
     "context": "ProblemsPanel",
     "bindings": {
       "enter": "menu::Confirm",
+      "alt-enter": "problems_panel::ShowQuickFixes",
     },
   },
   {

@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use collections::HashMap;
-use dap::{Capabilities, adapters::DebugAdapterName};
+use dap::Capabilities;
 use db::kvp::KeyValueStore;
 use gpui::{Axis, Context, Entity, EntityId, Focusable, Subscription, WeakEntity, Window};
 use project::Project;
@@ -25,6 +25,8 @@ pub(crate) enum DebuggerPaneItem {
     LoadedSources,
     Terminal,
     MemoryView,
+    /// IntelliJ's combined tab in the islands layout: frames beside variables.
+    ThreadsAndVariables,
 }
 
 impl DebuggerPaneItem {
@@ -38,6 +40,7 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::LoadedSources,
             DebuggerPaneItem::Terminal,
             DebuggerPaneItem::MemoryView,
+            DebuggerPaneItem::ThreadsAndVariables,
         ];
         VARIANTS
     }
@@ -65,6 +68,9 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::LoadedSources => SharedString::new_static("Sources"),
             DebuggerPaneItem::Terminal => SharedString::new_static("Terminal"),
             DebuggerPaneItem::MemoryView => SharedString::new_static("Memory View"),
+            DebuggerPaneItem::ThreadsAndVariables => {
+                SharedString::new_static("Threads & Variables")
+            }
         }
     }
     pub(crate) fn tab_tooltip(self) -> SharedString {
@@ -87,6 +93,9 @@ impl DebuggerPaneItem {
                 "Provides an interactive terminal session within the debugging environment"
             }
             DebuggerPaneItem::MemoryView => "Allows inspection of memory contents",
+            DebuggerPaneItem::ThreadsAndVariables => {
+                "Shows the call stack beside the variables of the selected frame"
+            }
         };
         SharedString::new_static(tooltip)
     }
@@ -122,18 +131,24 @@ pub(crate) struct SerializedPane {
 
 const DEBUGGER_PANEL_PREFIX: &str = "debugger_panel_";
 
+/// The islands layout is saved under its own key so that switching it on shows IntelliJ's
+/// default layout instead of one saved by the regular layout, and the other way around.
+pub(crate) fn layout_key(adapter_name: &str, cx: &App) -> String {
+    if ui::islands_style(cx).enabled {
+        format!("{DEBUGGER_PANEL_PREFIX}-islands-{adapter_name}")
+    } else {
+        format!("{DEBUGGER_PANEL_PREFIX}-{adapter_name}")
+    }
+}
+
 pub(crate) async fn serialize_pane_layout(
-    adapter_name: DebugAdapterName,
+    layout_key: String,
     pane_group: SerializedLayout,
     kvp: KeyValueStore,
 ) -> anyhow::Result<()> {
     let serialized_pane_group = serde_json::to_string(&pane_group)
         .context("Serializing pane group with serde_json as a string")?;
-    kvp.write_kvp(
-        format!("{DEBUGGER_PANEL_PREFIX}-{adapter_name}"),
-        serialized_pane_group,
-    )
-    .await
+    kvp.write_kvp(layout_key, serialized_pane_group).await
 }
 
 pub(crate) fn build_serialized_layout(
@@ -190,8 +205,9 @@ fn serialize_pane(pane: &Entity<Pane>, cx: &App) -> SerializedPane {
 pub(crate) fn get_serialized_layout(
     adapter_name: impl AsRef<str>,
     kvp: &KeyValueStore,
+    cx: &App,
 ) -> Option<SerializedLayout> {
-    let key = format!("{DEBUGGER_PANEL_PREFIX}-{}", adapter_name.as_ref());
+    let key = layout_key(adapter_name.as_ref(), cx);
 
     kvp.read_kvp(&key)
         .log_err()
@@ -278,6 +294,15 @@ pub(crate) fn deserialize_pane_layout(
                         pane_handle.clone(),
                         cx,
                     )),
+                    DebuggerPaneItem::ThreadsAndVariables => {
+                        Box::new(SubView::threads_and_variables(
+                            stack_frame_list.clone(),
+                            variable_list.clone(),
+                            running_state.clone(),
+                            pane_handle.clone(),
+                            cx,
+                        ))
+                    }
                     DebuggerPaneItem::Variables => Box::new(SubView::new(
                         variable_list.focus_handle(cx),
                         variable_list.clone().into(),

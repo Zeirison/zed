@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, ops::Range, sync::Arc, time::Duration};
 
+use anyhow::Context as _;
 use collections::{HashSet, IndexSet};
 use editor::Editor;
 use file_icons::FileIcons;
@@ -28,7 +29,13 @@ actions!(
     [
         /// Toggles focus on the Problems tool window. Outside the islands layout
         /// it opens the project diagnostics view instead.
-        ToggleFocus
+        ToggleFocus,
+        /// Opens the selected problem in the editor and shows its quick fixes.
+        ShowQuickFixes,
+        /// Shows or hides errors in the Problems tool window.
+        ToggleErrors,
+        /// Shows or hides warnings in the Problems tool window.
+        ToggleWarnings,
     ]
 );
 
@@ -81,6 +88,8 @@ pub struct ProblemsPanel {
     selected: Option<ProblemRow>,
     paths_to_update: IndexSet<ProjectPath>,
     update_task: Option<Task<anyhow::Result<()>>>,
+    show_errors: bool,
+    show_warnings: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -136,6 +145,8 @@ impl ProblemsPanel {
             selected: None,
             paths_to_update: IndexSet::default(),
             update_task: None,
+            show_errors: true,
+            show_warnings: true,
             _subscriptions: subscriptions,
         };
         let paths = this
@@ -219,8 +230,16 @@ impl ProblemsPanel {
         }));
     }
 
-    fn visible_files(&self) -> Vec<(&ProjectPath, &Vec<Problem>)> {
-        match self.active_tab {
+    fn is_shown(&self, problem: &Problem) -> bool {
+        if problem.severity == lsp::DiagnosticSeverity::ERROR {
+            self.show_errors
+        } else {
+            self.show_warnings
+        }
+    }
+
+    fn files_for_tab(&self, tab: ProblemsTab) -> Vec<(&ProjectPath, Vec<&Problem>)> {
+        let files: Vec<(&ProjectPath, &Vec<Problem>)> = match tab {
             ProblemsTab::Project => self.problems.iter().collect(),
             ProblemsTab::CurrentFile => self
                 .current_file
@@ -228,7 +247,62 @@ impl ProblemsPanel {
                 .and_then(|path| self.problems.get_key_value(path))
                 .into_iter()
                 .collect(),
-        }
+        };
+        files
+            .into_iter()
+            .filter_map(|(path, problems)| {
+                let problems = problems
+                    .iter()
+                    .filter(|problem| self.is_shown(problem))
+                    .collect::<Vec<_>>();
+                (!problems.is_empty()).then_some((path, problems))
+            })
+            .collect()
+    }
+
+    fn visible_files(&self) -> Vec<(&ProjectPath, Vec<&Problem>)> {
+        self.files_for_tab(self.active_tab)
+    }
+
+    fn toggle_errors(&mut self, _: &ToggleErrors, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_errors = !self.show_errors;
+        self.selected = None;
+        cx.notify();
+    }
+
+    fn toggle_warnings(&mut self, _: &ToggleWarnings, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_warnings = !self.show_warnings;
+        self.selected = None;
+        cx.notify();
+    }
+
+    fn show_quick_fixes(
+        &mut self,
+        _: &ShowQuickFixes,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ProblemRow::Problem(file_index, index)) = self.selected else {
+            return;
+        };
+        let Some(open_task) = self.open_problem(file_index, index, true, window, cx) else {
+            return;
+        };
+        cx.spawn_in(window, async move |_, cx| {
+            let editor = open_task.await?;
+            editor.update_in(cx, |editor, window, cx| {
+                editor.toggle_code_actions(
+                    &editor::actions::ToggleCodeActions {
+                        deployed_from: None,
+                        quick_launch: false,
+                    },
+                    window,
+                    cx,
+                );
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn rows(&self) -> Vec<ProblemRow> {
@@ -245,14 +319,10 @@ impl ProblemsPanel {
     }
 
     fn problem_count(&self, tab: ProblemsTab) -> usize {
-        match tab {
-            ProblemsTab::Project => self.problems.values().map(Vec::len).sum(),
-            ProblemsTab::CurrentFile => self
-                .current_file
-                .as_ref()
-                .and_then(|path| self.problems.get(path))
-                .map_or(0, Vec::len),
-        }
+        self.files_for_tab(tab)
+            .iter()
+            .map(|(_, problems)| problems.len())
+            .sum()
     }
 
     fn set_active_tab(&mut self, tab: ProblemsTab, cx: &mut Context<Self>) {
@@ -332,7 +402,9 @@ impl ProblemsPanel {
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         match self.selected {
             Some(ProblemRow::Problem(file_index, index)) => {
-                self.open_problem(file_index, index, true, window, cx)
+                if let Some(task) = self.open_problem(file_index, index, true, window, cx) {
+                    task.detach_and_log_err(cx);
+                }
             }
             Some(ProblemRow::File(file_index)) => self.toggle_collapsed(file_index, cx),
             None => {}
@@ -361,7 +433,7 @@ impl ProblemsPanel {
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<Task<anyhow::Result<Entity<Editor>>>> {
         let Some((path, position)) =
             self.visible_files()
                 .get(file_index)
@@ -371,24 +443,22 @@ impl ProblemsPanel {
                         .map(|problem| ((*path).clone(), problem.position))
                 })
         else {
-            return;
+            return None;
         };
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
+        let workspace = self.workspace.upgrade()?;
         let open_task = workspace.update(cx, |workspace, cx| {
             workspace.open_path(path, None, focus, window, cx)
         });
-        cx.spawn_in(window, async move |_, cx| {
+        Some(cx.spawn_in(window, async move |_, cx| {
             let item = open_task.await?;
-            if let Some(editor) = item.downcast::<Editor>() {
-                editor.update_in(cx, |editor, window, cx| {
-                    editor.go_to_singleton_buffer_point(position, window, cx);
-                })?;
-            }
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+            let editor = item
+                .downcast::<Editor>()
+                .context("problem's file did not open in an editor")?;
+            editor.update_in(cx, |editor, window, cx| {
+                editor.go_to_singleton_buffer_point(position, window, cx);
+            })?;
+            anyhow::Ok(editor)
+        }))
     }
 
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -439,6 +509,39 @@ impl ProblemsPanel {
             .child(current_file_tab)
             .child(project_tab)
             .child(div().flex_1())
+            .child(
+                IconButton::new("problems-show-errors", IconName::XCircle)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Error)
+                    .toggle_state(self.show_errors)
+                    .tooltip(Tooltip::text("Show Errors"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_errors(&ToggleErrors, window, cx)
+                    })),
+            )
+            .child(
+                IconButton::new("problems-show-warnings", IconName::Warning)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Warning)
+                    .toggle_state(self.show_warnings)
+                    .tooltip(Tooltip::text("Show Warnings"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_warnings(&ToggleWarnings, window, cx)
+                    })),
+            )
+            .child(
+                IconButton::new("problems-quick-fixes", IconName::BoltOutlined)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .disabled(!matches!(self.selected, Some(ProblemRow::Problem(..))))
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action("Show Quick Fixes", &ShowQuickFixes, cx)
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.show_quick_fixes(&ShowQuickFixes, window, cx)
+                    })),
+            )
+            .child(div().w_2())
             .child(render_panel_header_controls_at(
                 Arc::new(cx.entity()),
                 self.position(window, cx),
@@ -544,7 +647,11 @@ impl ProblemsPanel {
                     .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                         this.selected = Some(row);
                         let focus_editor = event.click_count() > 1;
-                        this.open_problem(file_index, index, focus_editor, window, cx);
+                        if let Some(task) =
+                            this.open_problem(file_index, index, focus_editor, window, cx)
+                        {
+                            task.detach_and_log_err(cx);
+                        }
                         cx.notify();
                     }))
                     .into_any_element()
@@ -600,6 +707,9 @@ impl Render for ProblemsPanel {
             .on_action(cx.listener(Self::collapse_selected))
             .on_action(cx.listener(Self::expand_selected))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::show_quick_fixes))
+            .on_action(cx.listener(Self::toggle_errors))
+            .on_action(cx.listener(Self::toggle_warnings))
             .child(self.render_header(window, cx))
             .child(if row_count == 0 {
                 self.render_empty_state().into_any_element()
